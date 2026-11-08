@@ -72,7 +72,7 @@ bool EditorExportPlatformIOS::has_valid_export_configuration(const Ref<EditorExp
 	String err;
 	String rendering_method = get_project_setting(p_preset, "rendering/renderer/rendering_method.mobile");
 	String rendering_driver = get_project_setting(p_preset, "rendering/rendering_device/driver." + get_platform_name());
-	if ((rendering_method == "forward_plus" || rendering_method == "mobile") && rendering_driver == "metal") {
+	if ((rendering_method == "forward_plus" || rendering_method == "vs_deferred_clustered" || rendering_method == "mobile") && rendering_driver == "metal") {
 		float version = p_preset->get("application/min_ios_version").operator String().to_float();
 		if (version < 14.0) {
 			err += TTR("Metal renderer require iOS 14+.") + "\n";

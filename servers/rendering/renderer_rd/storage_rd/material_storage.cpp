@@ -37,6 +37,7 @@
 #include "core/templates/local_vector.h"
 #include "servers/rendering/renderer_rd/forward_clustered/scene_shader_forward_clustered.h"
 #include "servers/rendering/renderer_rd/forward_mobile/scene_shader_forward_mobile.h"
+#include "servers/rendering/renderer_rd/vs_deferred_clustered/scene_shader_vs_deferred_clustered.h"
 #include "servers/rendering/renderer_rd/storage_rd/texture_storage.h"
 #include "servers/rendering/storage/variant_converters.h"
 
@@ -2631,6 +2632,11 @@ RSE::CullMode RendererRD::MaterialStorage::material_get_cull_mode(RID p_material
 		RendererSceneRenderImplementation::SceneShaderForwardMobile::ShaderData *sd_mobile = dynamic_cast<RendererSceneRenderImplementation::SceneShaderForwardMobile::ShaderData *>(material->shader->data);
 		if (sd_mobile) {
 			return (RSE::CullMode)sd_mobile->cull_mode;
+		}
+
+		RendererSceneRenderImplementation::SceneShaderVsDeferredClustered::ShaderData *sd_vs_deferred_clustered = dynamic_cast<RendererSceneRenderImplementation::SceneShaderVsDeferredClustered::ShaderData *>(material->shader->data);
+		if (sd_vs_deferred_clustered) {
+			return (RSE::CullMode)sd_vs_deferred_clustered->cull_mode;
 		}
 	}
 	return RSE::CULL_MODE_DISABLED;

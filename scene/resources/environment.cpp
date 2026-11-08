@@ -1184,7 +1184,7 @@ void Environment::_validate_property(PropertyInfo &p_property) const {
 		}
 	}
 
-	if (OS::get_singleton()->get_current_rendering_method() != "forward_plus") {
+	if (OS::get_singleton()->get_current_rendering_method() != "forward_plus" && OS::get_singleton()->get_current_rendering_method() != "vs_deferred_clustered") {
 		// Hide SSAO properties that only work in Forward+.
 		if (p_property.name.begins_with("ssao_")) {
 			if ((p_property.name != "ssao_enabled") && (p_property.name != "ssao_radius") && (p_property.name != "ssao_intensity")) {

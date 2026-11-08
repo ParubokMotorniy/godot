@@ -673,8 +673,8 @@ EditorBuildProfile::EditorBuildProfile() {
 	build_option_settings.insert(BUILD_OPTION_X11, settings_x11);
 
 	HashMap<String, LocalVector<Variant>> settings_rd = {
-		{ "rendering/renderer/rendering_method", { "forward_plus", "mobile" } },
-		{ "rendering/renderer/rendering_method.mobile", { "forward_plus", "mobile" } },
+		{ "rendering/renderer/rendering_method", { "forward_plus", "mobile", "vs_deferred_clustered" } },
+		{ "rendering/renderer/rendering_method.mobile", { "forward_plus", "mobile", "vs_deferred_clustered" } },
 		{ "rendering/renderer/rendering_method.web", { "forward_plus", "mobile" } },
 	};
 	build_option_settings.insert(BUILD_OPTION_RENDERING_DEVICE, settings_rd);

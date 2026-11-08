@@ -903,7 +903,7 @@ bool EditorExportPlatformAndroid::_has_manage_external_storage_permission(const 
 bool EditorExportPlatformAndroid::_uses_vulkan(const Ref<EditorExportPreset> &p_preset) const {
 	String rendering_method = get_project_setting(p_preset, "rendering/renderer/rendering_method.mobile");
 	String rendering_driver = get_project_setting(p_preset, "rendering/rendering_device/driver.android");
-	return (rendering_method == "forward_plus" || rendering_method == "mobile") && rendering_driver == "vulkan";
+	return (rendering_method == "forward_plus" || rendering_method == "vs_deferred_clustered" || rendering_method == "mobile") && rendering_driver == "vulkan";
 }
 
 void EditorExportPlatformAndroid::_notification(int p_what) {
@@ -3186,7 +3186,7 @@ bool EditorExportPlatformAndroid::has_valid_project_configuration(const Ref<Edit
 	}
 
 	String current_renderer = get_project_setting(p_preset, "rendering/renderer/rendering_method.mobile");
-	if (current_renderer == "forward_plus") {
+	if (current_renderer == "forward_plus" || current_renderer == "vs_deferred_clustered") {
 		// Warning only, so don't override `valid`.
 		err += vformat(TTR("The \"%s\" renderer is designed for Desktop devices, and is not suitable for Android devices."), current_renderer);
 		err += "\n";

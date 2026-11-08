@@ -1356,6 +1356,8 @@ Error ShaderPreprocessor::preprocess(const String &p_code, const String &p_filen
 			insert_builtin_define("CURRENT_RENDERER", _MKSTR(2), pp_state);
 		} else if (rendering_method == "mobile") {
 			insert_builtin_define("CURRENT_RENDERER", _MKSTR(1), pp_state);
+		} else if (rendering_method == "vs_deferred_clustered") {
+			insert_builtin_define("CURRENT_RENDERER", _MKSTR(3), pp_state);
 		} else { // gl_compatibility
 			insert_builtin_define("CURRENT_RENDERER", _MKSTR(0), pp_state);
 		}
@@ -1363,6 +1365,7 @@ Error ShaderPreprocessor::preprocess(const String &p_code, const String &p_filen
 		insert_builtin_define("RENDERER_COMPATIBILITY", _MKSTR(0), pp_state);
 		insert_builtin_define("RENDERER_MOBILE", _MKSTR(1), pp_state);
 		insert_builtin_define("RENDERER_FORWARD_PLUS", _MKSTR(2), pp_state);
+		insert_builtin_define("RENDERER_VS_DEFERRED_CLUSTERED", _MKSTR(3), pp_state);
 	}
 
 	Error err = preprocess(&pp_state, p_code, r_result);

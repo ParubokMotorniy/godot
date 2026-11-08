@@ -513,6 +513,12 @@ void ProjectDialog::_renderer_selected() {
 				String::utf8("\n•  ") + TTR("Uses RenderingDevice backend.") +
 				String::utf8("\n•  ") + TTR("Fast rendering of simple scenes."));
 		rd_error = !rendering_device_supported;
+	} else if (renderer_type == "vs_deferred_clustered") {
+		renderer_info->set_text(
+				String::utf8("•  ") + TTR("Supports desktop platforms only.") +
+				String::utf8("\n•  ") + TTR("Experimental visibility buffer renderer.") +
+				String::utf8("\n•  ") + TTR("Uses RenderingDevice backend."));
+		rd_error = !rendering_device_supported;
 	} else if (renderer_type == "gl_compatibility") {
 		renderer_info->set_text(
 				String::utf8("•  ") + TTR("Supports desktop, mobile + web platforms.") +
@@ -583,6 +589,8 @@ void ProjectDialog::ok_pressed() {
 			project_features.push_back("Forward Plus");
 		} else if (renderer_type == "mobile") {
 			project_features.push_back("Mobile");
+		} else if (renderer_type == "vs_deferred_clustered") {
+			project_features.push_back("VS Deferred Clustered");
 		} else if (renderer_type == "gl_compatibility") {
 			project_features.push_back("GL Compatibility");
 			// Also change the default renderer for the mobile override.
@@ -1146,6 +1154,19 @@ ProjectDialog::ProjectDialog() {
 	rs_button->connect(SceneStringName(pressed), callable_mp(this, &ProjectDialog::_renderer_selected));
 	rvb->add_child(rs_button);
 	if (default_renderer_type == "mobile") {
+		rs_button->set_pressed(true);
+	}
+	rs_button = memnew(CheckBox);
+	rs_button->set_button_group(renderer_button_group);
+	rs_button->set_text(TTRC("VS Deferred Clustered"));
+	rs_button->set_accessibility_name(TTRC("Renderer:"));
+#ifndef RD_ENABLED
+	rs_button->set_disabled(true);
+#endif
+	rs_button->set_meta(SNAME("rendering_method"), "vs_deferred_clustered");
+	rs_button->connect(SceneStringName(pressed), callable_mp(this, &ProjectDialog::_renderer_selected));
+	rvb->add_child(rs_button);
+	if (default_renderer_type == "vs_deferred_clustered") {
 		rs_button->set_pressed(true);
 	}
 	rs_button = memnew(CheckBox);

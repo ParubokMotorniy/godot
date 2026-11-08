@@ -6071,6 +6071,8 @@ String EditorNode::_get_system_info() const {
 		rendering_method = "Forward+";
 	} else if (rendering_method == "mobile") {
 		rendering_method = "Mobile";
+	} else if (rendering_method == "vs_deferred_clustered") {
+		rendering_method = "VS Deferred Clustered";
 	} else if (rendering_method == "gl_compatibility") {
 		rendering_method = "Compatibility";
 	}
@@ -7787,7 +7789,7 @@ void EditorNode::_renderer_selected(int p_index) {
 		video_restart_dialog->disconnect(SceneStringName(confirmed), callable_mp(this, &EditorNode::_set_renderer_name_save_and_restart));
 	}
 
-	const String mobile_rendering_method = rendering_method == "forward_plus" ? "mobile" : rendering_method;
+	const String mobile_rendering_method = (rendering_method == "forward_plus" || rendering_method == "vs_deferred_clustered") ? "mobile" : rendering_method;
 	const String web_rendering_method = "gl_compatibility";
 	video_restart_dialog->connect(SceneStringName(confirmed), callable_mp(this, &EditorNode::_set_renderer_name_save_and_restart).bind(rendering_method));
 	video_restart_dialog->set_text(
@@ -7808,6 +7810,9 @@ String EditorNode::_to_rendering_method_display_name(const String &p_rendering_m
 	if (p_rendering_method == "gl_compatibility") {
 		return TTR("Compatibility");
 	}
+	if (p_rendering_method == "vs_deferred_clustered") {
+		return TTR("VS Deferred Clustered");
+	}
 	return p_rendering_method;
 }
 
@@ -7818,7 +7823,7 @@ void EditorNode::_set_renderer_name_save_and_restart(const String &p_rendering_m
 		// Also change the mobile override if changing to a compatible renderer.
 		// This prevents visual discrepancies between desktop and mobile platforms.
 		ProjectSettings::get_singleton()->set("rendering/renderer/rendering_method.mobile", p_rendering_method);
-	} else if (p_rendering_method == "forward_plus") {
+	} else if (p_rendering_method == "forward_plus" || p_rendering_method == "vs_deferred_clustered") {
 		// Use the equivalent mobile renderer. This prevents the renderer from staying
 		// on its old choice if moving from `gl_compatibility` to `forward_plus`.
 		ProjectSettings::get_singleton()->set("rendering/renderer/rendering_method.mobile", "mobile");

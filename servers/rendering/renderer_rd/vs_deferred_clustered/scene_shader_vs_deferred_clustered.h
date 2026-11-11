@@ -56,33 +56,16 @@ public:
 		PIPELINE_COLOR_PASS_FLAG_TRANSPARENT = 1 << 0,
 	};
 
-	// Packed into pipeline specialization constants, must match scene_vs_deferred_clustered_inc.glsl.
+	// Packed into a pipeline specialization constant, must match scene_vs_deferred_clustered_inc.glsl.
 	struct ShaderSpecialization {
 		union {
 			uint32_t packed_0;
-
-			struct {
-				uint32_t use_light_projector : 1;
-				uint32_t use_light_soft_shadows : 1;
-				uint32_t use_directional_soft_shadows : 1;
-				uint32_t projector_use_mipmaps : 1;
-				uint32_t reserved : 4;
-				uint32_t soft_shadow_samples : 6;
-				uint32_t penumbra_shadow_samples : 6;
-				uint32_t directional_soft_shadow_samples : 6;
-				uint32_t directional_penumbra_shadow_samples : 6;
-			};
-		};
-
-		union {
-			uint32_t packed_1;
 
 			struct {
 				uint32_t multimesh : 1;
 				uint32_t multimesh_format_2d : 1;
 				uint32_t multimesh_has_color : 1;
 				uint32_t multimesh_has_custom_data : 1;
-				uint32_t cluster_has_area_light : 1;
 			};
 		};
 	};
@@ -131,7 +114,6 @@ public:
 				h = hash_murmur3_one_32(version, h);
 				h = hash_murmur3_one_32(color_pass_flags, h);
 				h = hash_murmur3_one_32(shader_specialization.packed_0, h);
-				h = hash_murmur3_one_32(shader_specialization.packed_1, h);
 				return hash_fmix32(h);
 			}
 		};
@@ -165,24 +147,17 @@ public:
 		bool uses_alpha_antialiasing = false;
 		bool uses_depth_prepass_alpha = false;
 		bool uses_discard = false;
-		bool uses_particle_trails = false;
-		bool wireframe = false;
 
 		bool uses_vertex = false;
 		bool uses_position = false;
 		bool uses_screen_texture = false;
 		bool uses_depth_texture = false;
-		bool uses_normal_texture = false;
-		bool uses_time = false;
-		bool uses_vertex_time = false;
-		bool uses_fragment_time = false;
 		bool writes_modelview_or_projection = false;
-		bool uses_world_coordinates = false;
 		bool uses_z_clip_scale = false;
 		RSE::CullMode cull_mode = RSE::CULL_MODE_DISABLED;
 
 		_FORCE_INLINE_ bool uses_alpha_pass() const {
-			bool has_read_screen_alpha = uses_screen_texture || uses_depth_texture || uses_normal_texture;
+			bool has_read_screen_alpha = uses_screen_texture || uses_depth_texture;
 			bool has_base_alpha = (uses_alpha && (!uses_alpha_clip || uses_alpha_antialiasing)) || has_read_screen_alpha;
 			bool has_blend_alpha = uses_blend_alpha;
 			bool has_alpha = has_base_alpha || has_blend_alpha;
@@ -199,7 +174,7 @@ public:
 
 		_FORCE_INLINE_ bool uses_shared_shadow_material() const {
 			bool backface_culling = cull_mode == RSE::CULL_MODE_BACK;
-			return !uses_particle_trails && !writes_modelview_or_projection && !uses_vertex && !uses_position && !uses_discard && !uses_depth_prepass_alpha && !uses_alpha_clip && !uses_alpha_antialiasing && backface_culling && !uses_point_size && !uses_world_coordinates && !wireframe && !uses_z_clip_scale;
+			return !writes_modelview_or_projection && !uses_vertex && !uses_position && !uses_discard && !uses_depth_prepass_alpha && !uses_alpha_clip && !uses_alpha_antialiasing && backface_culling && !uses_point_size && !uses_z_clip_scale;
 		}
 
 		virtual void set_code(const String &p_Code);
@@ -248,8 +223,6 @@ public:
 	RID default_vec4_xform_uniform_set;
 
 	RID shadow_sampler;
-
-	ShaderSpecialization default_specialization = {}; // Quality settings, see RenderVsDeferredClustered::_update_shader_quality_settings().
 
 	uint32_t pipeline_compilations[RSE::PIPELINE_SOURCE_MAX] = {};
 

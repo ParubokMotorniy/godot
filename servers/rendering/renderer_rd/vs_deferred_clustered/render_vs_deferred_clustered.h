@@ -138,11 +138,6 @@ private:
 		RID texture;
 	} dfg_lut;
 
-	struct LTC {
-		RID lut1_texture;
-		RID lut2_texture;
-	} ltc;
-
 	enum PassMode {
 		PASS_MODE_COLOR,
 		PASS_MODE_SHADOW,
@@ -167,10 +162,8 @@ private:
 		uint32_t color_pass_flags = 0;
 		RID render_pass_uniform_set;
 		uint32_t element_offset = 0;
-		bool use_directional_soft_shadow = false;
-		SceneShaderVsDeferredClustered::ShaderSpecialization base_specialization = {};
 
-		RenderListParameters(GeometryInstanceSurfaceDataCache **p_elements, RenderElementInfo *p_element_info, int p_element_count, bool p_reverse_cull, PassMode p_pass_mode, uint32_t p_color_pass_flags, RID p_render_pass_uniform_set, bool p_use_directional_soft_shadows = false, uint32_t p_element_offset = 0, SceneShaderVsDeferredClustered::ShaderSpecialization p_base_specialization = {}) {
+		RenderListParameters(GeometryInstanceSurfaceDataCache **p_elements, RenderElementInfo *p_element_info, int p_element_count, bool p_reverse_cull, PassMode p_pass_mode, uint32_t p_color_pass_flags, RID p_render_pass_uniform_set, uint32_t p_element_offset = 0) {
 			elements = p_elements;
 			element_info = p_element_info;
 			element_count = p_element_count;
@@ -178,24 +171,18 @@ private:
 			pass_mode = p_pass_mode;
 			color_pass_flags = p_color_pass_flags;
 			render_pass_uniform_set = p_render_pass_uniform_set;
-			use_directional_soft_shadow = p_use_directional_soft_shadows;
 			element_offset = p_element_offset;
-			base_specialization = p_base_specialization;
 		}
 	};
 
 	// When changing any of these enums, remember to change the corresponding enums in the shader files as well.
 	enum {
 		INSTANCE_DATA_FLAG_MULTIMESH_INDIRECT = 1 << 2,
-		INSTANCE_DATA_FLAGS_DYNAMIC = 1 << 3,
 		INSTANCE_DATA_FLAGS_NON_UNIFORM_SCALE = 1 << 4,
-		INSTANCE_DATA_FLAG_PARTICLES = 1 << 11,
 		INSTANCE_DATA_FLAG_MULTIMESH = 1 << 12,
 		INSTANCE_DATA_FLAG_MULTIMESH_FORMAT_2D = 1 << 13,
 		INSTANCE_DATA_FLAG_MULTIMESH_HAS_COLOR = 1 << 14,
 		INSTANCE_DATA_FLAG_MULTIMESH_HAS_CUSTOM_DATA = 1 << 15,
-		INSTANCE_DATA_FLAGS_PARTICLE_TRAIL_SHIFT = 16,
-		INSTANCE_DATA_FLAGS_PARTICLE_TRAIL_MASK = 0xFF,
 		INSTANCE_DATA_FLAGS_FADE_SHIFT = 24,
 		INSTANCE_DATA_FLAGS_FADE_MASK = 0xFFUL << INSTANCE_DATA_FLAGS_FADE_SHIFT
 	};
@@ -226,9 +213,8 @@ private:
 			float compressed_aabb_size[4];
 			float uv_scale[4];
 			uint32_t flags;
-			uint32_t instance_uniforms_ofs; //base offset in global buffer for instance variables
 			uint32_t layer_mask;
-			uint32_t pad;
+			uint32_t pad[2];
 #ifdef REAL_T_IS_DOUBLE
 			float model_precision[4];
 #endif
@@ -305,8 +291,6 @@ private:
 		union {
 			struct {
 				uint32_t lod_index : 8;
-				uint32_t uses_softshadow : 1;
-				uint32_t uses_projector : 1;
 			};
 			uint32_t value;
 		};
@@ -331,9 +315,7 @@ private:
 			FLAG_PASS_OPAQUE = 2,
 			FLAG_PASS_ALPHA = 4,
 			FLAG_PASS_SHADOW = 8,
-			FLAG_USES_SHARED_SHADOW_MATERIAL = 128,
 			FLAG_USES_DOUBLE_SIDED_SHADOWS = 32768,
-			FLAG_USES_PARTICLE_TRAILS = 65536,
 		};
 
 		union {
@@ -344,9 +326,7 @@ private:
 			struct {
 				// Needs to be grouped together to be used in RenderElementInfo, as the value is masked directly.
 				uint64_t lod_index : 8;
-				uint64_t uses_softshadow : 1;
-				uint64_t uses_projector : 1;
-				uint64_t reserved : 2;
+				uint64_t reserved : 4;
 
 				// Sorted based on optimal order for respecting priority and reducing the amount of rebinding of shaders, materials,
 				// and geometry.
@@ -382,12 +362,8 @@ private:
 	class GeometryInstanceVsDeferredClustered : public RenderGeometryInstanceBase {
 	public:
 		//used during rendering
-		bool store_transform_cache = true;
 		RID transforms_uniform_set;
 		uint32_t instance_count = 0;
-		uint32_t trail_steps = 1;
-		bool using_projectors = false;
-		bool using_softshadows = false;
 
 		//used during setup
 		GeometryInstanceSurfaceDataCache *surface_caches = nullptr;
@@ -410,7 +386,8 @@ private:
 		// Dummy: required by RenderGeometryInstance, VoxelGI is not supported.
 		virtual void pair_voxel_gi_instances(const RID *p_voxel_gi_instances, uint32_t p_voxel_gi_instance_count) override {}
 
-		virtual void set_softshadow_projector_pairing(bool p_softshadow, bool p_projector) override;
+		// Dummy: required by RenderGeometryInstance, light projectors and soft shadows are not supported.
+		virtual void set_softshadow_projector_pairing(bool p_softshadow, bool p_projector) override {}
 	};
 
 	// These are not used in the clustered path, it has different light clustering tech.
@@ -477,8 +454,6 @@ private:
 	};
 
 	RenderList render_list[RENDER_LIST_MAX];
-
-	virtual void _update_shader_quality_settings() override;
 
 	/* Effects */
 

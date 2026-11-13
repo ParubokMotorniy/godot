@@ -230,7 +230,7 @@ void SceneShaderVsDeferredClustered::ShaderData::_create_pipeline(PipelineKey p_
 			depth_stencil_state.depth_compare_operator = RD::COMPARE_OP_EQUAL;
 			depth_stencil_state.enable_depth_write = false;
 		}
-	} else if (p_pipeline_key.version == PIPELINE_VERSION_DEPTH_PASS_WITH_NORMAL_AND_ROUGHNESS) {
+	} else if (p_pipeline_key.version == PIPELINE_VERSION_DEPTH_PASS_WITH_NORMAL_AND_ROUGHNESS || p_pipeline_key.version == PIPELINE_VERSION_VISIBILITY_PASS) {
 		blend_state = RD::PipelineColorBlendState::create_disabled(1);
 	}
 
@@ -378,6 +378,7 @@ void SceneShaderVsDeferredClustered::init(const String p_defines) {
 		shader_versions.push_back("\n#define MODE_RENDER_DEPTH\n#define MODE_DUAL_PARABOLOID\n"); // PIPELINE_VERSION_DEPTH_PASS_DP
 		shader_versions.push_back("\n#define MODE_RENDER_DEPTH\n#define MODE_RENDER_NORMAL_ROUGHNESS\n"); // PIPELINE_VERSION_DEPTH_PASS_WITH_NORMAL_AND_ROUGHNESS
 		shader_versions.push_back(""); // PIPELINE_VERSION_COLOR_PASS (opaque and transparent)
+		shader_versions.push_back("\n#define MODE_RENDER_DEPTH\n#define MODE_RENDER_VISIBILITY\n"); // PIPELINE_VERSION_VISIBILITY_PASS
 
 		Vector<uint64_t> dynamic_buffers;
 		dynamic_buffers.push_back(ShaderRD::DynamicBuffer::encode(RenderVsDeferredClustered::RENDER_PASS_UNIFORM_SET, 2));

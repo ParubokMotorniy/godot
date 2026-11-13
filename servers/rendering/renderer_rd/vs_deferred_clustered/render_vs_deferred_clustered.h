@@ -43,6 +43,8 @@
 
 #define RB_TEX_NORMAL_ROUGHNESS SNAME("normal_roughness")
 
+#define RB_BUF_VISIBILITY SNAME("visibility_buffer")
+
 namespace RendererSceneRenderImplementation {
 
 /* Minimal clustered renderer used as the base for a visibility buffer renderer.
@@ -99,8 +101,13 @@ public:
 		bool has_normal_roughness() const { return render_buffers->has_texture(RB_SCOPE_VS_DEFERRED_CLUSTERED, RB_TEX_NORMAL_ROUGHNESS); }
 		RID get_normal_roughness() const { return render_buffers->get_texture(RB_SCOPE_VS_DEFERRED_CLUSTERED, RB_TEX_NORMAL_ROUGHNESS); }
 
+		void ensure_visibility_buffer();
+		bool has_visibility_buffer() const { return render_buffers->has_texture(RB_SCOPE_VS_DEFERRED_CLUSTERED, RB_BUF_VISIBILITY); }
+		RID get_visibility_buffer() const { return render_buffers->get_texture(RB_SCOPE_VS_DEFERRED_CLUSTERED,RB_BUF_VISIBILITY); }
+
 		RID get_color_fb();
 		RID get_depth_fb(bool p_normal_roughness);
+		RID get_visibility_fb();
 
 		virtual void configure(RenderSceneBuffersRD *p_render_buffers) override;
 		virtual void free_data() override;
@@ -144,6 +151,7 @@ private:
 		PASS_MODE_SHADOW_DP,
 		PASS_MODE_DEPTH,
 		PASS_MODE_DEPTH_NORMAL_ROUGHNESS,
+		PASS_MODE_VISIBILITY,
 	};
 
 	enum ColorPassFlags {

@@ -44,6 +44,8 @@
 #include "servers/rendering/shader_include_db.h"
 
 #include "modules/modules_enabled.gen.h"
+#include <cassert>
+#include <iostream>
 
 #ifdef MODULE_GLSLANG_ENABLED
 #include "modules/glslang/shader_compile.h"

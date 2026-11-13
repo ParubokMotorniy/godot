@@ -36,6 +36,7 @@
 #include "servers/rendering/renderer_rd/storage_rd/mesh_storage.h"
 #include "servers/rendering/renderer_rd/storage_rd/texture_storage.h"
 #include "servers/rendering/renderer_rd/uniform_set_cache_rd.h"
+#include "servers/rendering/renderer_rd/vs_deferred_clustered/scene_shader_vs_deferred_clustered.h"
 #include "servers/rendering/rendering_device.h"
 
 using namespace RendererSceneRenderImplementation;
@@ -49,6 +50,14 @@ void RenderVsDeferredClustered::RenderBufferDataVsDeferredClustered::ensure_norm
 
 	if (!render_buffers->has_texture(RB_SCOPE_VS_DEFERRED_CLUSTERED, RB_TEX_NORMAL_ROUGHNESS)) {
 		render_buffers->create_texture(RB_SCOPE_VS_DEFERRED_CLUSTERED, RB_TEX_NORMAL_ROUGHNESS, RD::DATA_FORMAT_R8G8B8A8_UNORM, RenderSceneBuffersRD::get_color_usage_bits(false, false, render_buffers->get_can_be_storage()));
+	}
+}
+void RendererSceneRenderImplementation::RenderVsDeferredClustered::RenderBufferDataVsDeferredClustered::ensure_visibility_buffer()
+{
+	ERR_FAIL_NULL(render_buffers);
+
+	if (!render_buffers->has_texture(RB_SCOPE_VS_DEFERRED_CLUSTERED, RB_BUF_VISIBILITY)) {
+		render_buffers->create_texture(RB_SCOPE_VS_DEFERRED_CLUSTERED, RB_BUF_VISIBILITY, RD::DATA_FORMAT_R32_UINT, RenderSceneBuffersRD::get_color_usage_bits(false, false, render_buffers->get_can_be_storage()));
 	}
 }
 
@@ -97,6 +106,12 @@ RID RenderVsDeferredClustered::RenderBufferDataVsDeferredClustered::get_depth_fb
 		return FramebufferCacheRD::get_singleton()->get_cache(render_buffers->get_depth_texture(), get_normal_roughness());
 	}
 	return FramebufferCacheRD::get_singleton()->get_cache(render_buffers->get_depth_texture());
+}
+
+RID RendererSceneRenderImplementation::RenderVsDeferredClustered::RenderBufferDataVsDeferredClustered::get_visibility_fb() {
+	ERR_FAIL_NULL_V(render_buffers, RID());
+	ensure_visibility_buffer();
+	return FramebufferCacheRD::get_singleton()->get_cache(render_buffers->get_depth_texture(), get_visibility_buffer());
 }
 
 void RenderVsDeferredClustered::RenderSceneBuffersNoMSAA::configure(const RenderSceneBuffersConfiguration *p_config) {
@@ -167,6 +182,8 @@ void RenderVsDeferredClustered::_render_list(RenderingDevice::DrawListID p_draw_
 		case PASS_MODE_DEPTH_NORMAL_ROUGHNESS:
 			pipeline_key.version = SceneShaderVsDeferredClustered::PIPELINE_VERSION_DEPTH_PASS_WITH_NORMAL_AND_ROUGHNESS;
 			break;
+		case PASS_MODE_VISIBILITY:
+			pipeline_key.version = SceneShaderVsDeferredClustered::PIPELINE_VERSION_VISIBILITY_PASS;
 	}
 
 	RID prev_material_uniform_set;
@@ -196,7 +213,7 @@ void RenderVsDeferredClustered::_render_list(RenderingDevice::DrawListID p_draw_
 		SceneShaderVsDeferredClustered::ShaderData *shader;
 		void *mesh_surface;
 
-		if (shadow_pass || pass_mode == PASS_MODE_DEPTH) { // Plain depth can use the (possibly shared) shadow material.
+		if (shadow_pass || pass_mode == PASS_MODE_DEPTH || pass_mode == PASS_MODE_VISIBILITY) { // Plain depth can use the (possibly shared) shadow material.
 			material_uniform_set = surf->material_uniform_set_shadow;
 			shader = surf->shader_shadow;
 			mesh_surface = surf->surface_shadow;
@@ -829,20 +846,19 @@ void RenderVsDeferredClustered::_render_scene(RenderDataRD *p_render_data, const
 		clear_color = p_default_bg_color;
 	}
 
-	/* 1. Depth pre-pass (+ normal/roughness when SSAO needs it) */
+	/* 1. Visibility pass  */
+	//TODO bring SSAO support back (+ normal/roughness when SSAO needs it)
 	{
-		RENDER_TIMESTAMP("Render Depth Pre-Pass");
-		RD::get_singleton()->draw_command_begin_label("Render Depth Pre-Pass");
+		RENDER_TIMESTAMP("Visibility Determination Pass");
+		RD::get_singleton()->draw_command_begin_label("Visibility Determination Pass");
 
-		Vector<Color> depth_pass_clear;
-		if (using_ssao) {
-			depth_pass_clear.push_back(Color(0, 0, 0, 0));
-		}
+		Vector<Color> vis_pass_clear;
+		vis_pass_clear.push_back(Color(0, 0, 0, 0));
 
 		RID rp_uniform_set = _setup_render_pass_uniform_set(RENDER_LIST_OPAQUE, nullptr, RID(), samplers, depth_prepass_uniform_buffer_index);
 		RenderList &rl = render_list[RENDER_LIST_OPAQUE];
-		RenderListParameters render_list_params(rl.elements.ptr(), rl.element_info.ptr(), rl.elements.size(), reverse_cull, using_ssao ? PASS_MODE_DEPTH_NORMAL_ROUGHNESS : PASS_MODE_DEPTH, 0, rp_uniform_set);
-		_render_list_with_draw_list(&render_list_params, rb_data->get_depth_fb(using_ssao), RD::DRAW_CLEAR_ALL, depth_pass_clear, 0.0f, p_render_data->render_region);
+		RenderListParameters render_list_params(rl.elements.ptr(), rl.element_info.ptr(), rl.elements.size(), reverse_cull, PASS_MODE_VISIBILITY , 0, rp_uniform_set);
+		_render_list_with_draw_list(&render_list_params, rb_data->get_visibility_fb(), RD::DRAW_CLEAR_ALL, vis_pass_clear, 0.0f, p_render_data->render_region);
 
 		RD::get_singleton()->draw_command_end_label();
 	}

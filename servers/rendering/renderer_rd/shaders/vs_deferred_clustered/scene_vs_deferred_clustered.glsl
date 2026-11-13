@@ -514,6 +514,10 @@ layout(set = MATERIAL_UNIFORM_SET, binding = 0, std140) uniform MaterialUniforms
 layout(location = 0) out vec4 normal_roughness_output_buffer;
 #endif
 
+#ifdef MODE_RENDER_VISIBILITY
+layout(location = 0) out uint visibility_buffer;
+#endif
+
 #else // RENDER DEPTH
 
 layout(location = 0) out vec4 frag_color;
@@ -1310,6 +1314,10 @@ void fragment_shader(in SceneData scene_data) {
 	// Static objects keep roughness under 0.5 (dynamic objects are not flagged by this renderer).
 	normal_roughness_output_buffer.w = normal_roughness_output_buffer.w * (127.0 / 255.0);
 #endif //MODE_RENDER_NORMAL_ROUGHNESS
+
+#ifdef MODE_RENDER_VISIBILITY
+	visibility_buffer = uint(gl_PrimitiveID) + 1u;
+#endif
 
 //nothing happens, so a tree-ssa optimizer will result in no fragment shader :)
 #else

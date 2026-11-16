@@ -57,7 +57,7 @@ void RendererSceneRenderImplementation::RenderVsDeferredClustered::RenderBufferD
 	ERR_FAIL_NULL(render_buffers);
 
 	if (!render_buffers->has_texture(RB_SCOPE_VS_DEFERRED_CLUSTERED, RB_BUF_VISIBILITY)) {
-		render_buffers->create_texture(RB_SCOPE_VS_DEFERRED_CLUSTERED, RB_BUF_VISIBILITY, RD::DATA_FORMAT_R32_UINT, RenderSceneBuffersRD::get_color_usage_bits(false, false, render_buffers->get_can_be_storage()));
+		render_buffers->create_texture(RB_SCOPE_VS_DEFERRED_CLUSTERED, RB_BUF_VISIBILITY, RD::DATA_FORMAT_R32G32_UINT, RenderSceneBuffersRD::get_color_usage_bits(false, false, render_buffers->get_can_be_storage()));
 	}
 }
 
@@ -184,6 +184,7 @@ void RenderVsDeferredClustered::_render_list(RenderingDevice::DrawListID p_draw_
 			break;
 		case PASS_MODE_VISIBILITY:
 			pipeline_key.version = SceneShaderVsDeferredClustered::PIPELINE_VERSION_VISIBILITY_PASS;
+			break;
 	}
 
 	RID prev_material_uniform_set;
@@ -428,8 +429,8 @@ void RenderVsDeferredClustered::_fill_instance_data(RenderListType p_render_list
 
 		instance_data.flags = inst->flags_cache;
 		instance_data.layer_mask = inst->layer_mask;
+		instance_data.surface_submission_idx = i;
 		instance_data.pad[0] = 0;
-		instance_data.pad[1] = 0;
 
 		AABB surface_aabb = AABB(Vector3(0.0, 0.0, 0.0), Vector3(1.0, 1.0, 1.0));
 		uint64_t format = RendererRD::MeshStorage::get_singleton()->mesh_surface_get_format(surface->surface);
@@ -443,11 +444,11 @@ void RenderVsDeferredClustered::_fill_instance_data(RenderListType p_render_list
 		instance_data.set_compressed_aabb(surface_aabb);
 		instance_data.set_uv_scale(uv_scale);
 
-		scene_state.curr_gpu_ptr[p_render_list][i + p_offset] = instance_data;
-
 		const bool cant_repeat = instance_data.flags & INSTANCE_DATA_FLAG_MULTIMESH || inst->mesh_instance.is_valid();
 
 		if (prev_surface != nullptr && !cant_repeat && prev_surface->sort.sort_key1 == surface->sort.sort_key1 && prev_surface->sort.sort_key2 == surface->sort.sort_key2 && inst->mirror == prev_surface->owner->mirror && repeats < RenderElementInfo::MAX_REPEATS) {
+			//set surface ids to the surface of the 1st instance
+			instance_data.surface_submission_idx = i - repeats;
 			//this element is the same as the previous one, count repeats to draw it using instancing
 			repeats++;
 		} else {
@@ -461,6 +462,8 @@ void RenderVsDeferredClustered::_fill_instance_data(RenderListType p_render_list
 				p_render_info[RSE::VIEWPORT_RENDER_INFO_DRAW_CALLS_IN_FRAME]++;
 			}
 		}
+
+		scene_state.curr_gpu_ptr[p_render_list][i + p_offset] = instance_data;
 
 		RenderElementInfo &element_info = rl->element_info[p_offset + i];
 

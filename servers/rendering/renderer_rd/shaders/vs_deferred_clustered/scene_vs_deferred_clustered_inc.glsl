@@ -116,7 +116,7 @@ struct InstanceData {
 	vec4 uv_scale;
 	uint flags;
 	uint layer_mask;
-	uint pad0;
+	uint surface_submission_idx;
 	uint pad1;
 #ifdef USE_DOUBLE_PRECISION
 	vec4 model_precision;

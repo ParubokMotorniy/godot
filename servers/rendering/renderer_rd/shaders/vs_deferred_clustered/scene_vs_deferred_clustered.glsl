@@ -90,6 +90,8 @@ layout(location = 9) out float dp_clip;
 
 layout(location = 10) out flat uint instance_index_interp;
 
+layout(location = 11) out flat uint instance_index_multimesh;
+
 invariant gl_Position;
 
 #GLOBALS
@@ -403,6 +405,10 @@ void main() {
 	uint instance_index = draw_call.instance_index;
 	if (!sc_multimesh()) {
 		instance_index += INSTANCE_INDEX;
+		instance_index_multimesh = 0;
+	}else
+	{
+		instance_index_multimesh = INSTANCE_INDEX;
 	}
 
 	instance_index_interp = instance_index;
@@ -493,6 +499,7 @@ layout(location = 9) in float dp_clip;
 #endif
 
 layout(location = 10) in flat uint instance_index_interp;
+layout(location = 11) in flat uint instance_index_multimesh;
 
 //defines to keep compatibility with vertex
 
@@ -515,7 +522,7 @@ layout(location = 0) out vec4 normal_roughness_output_buffer;
 #endif
 
 #ifdef MODE_RENDER_VISIBILITY
-layout(location = 0) out uint visibility_buffer;
+layout(location = 0) out uvec2 visibility_buffer;
 #endif
 
 #else // RENDER DEPTH
@@ -1316,7 +1323,9 @@ void fragment_shader(in SceneData scene_data) {
 #endif //MODE_RENDER_NORMAL_ROUGHNESS
 
 #ifdef MODE_RENDER_VISIBILITY
-	visibility_buffer = uint(gl_PrimitiveID) + 1u;
+	//TODO: I may want to build visbuffer Id dynamically based on multimesh ON/OFF
+	visibility_buffer.x = uint(gl_PrimitiveID) + 1u;
+	visibility_buffer.y = instances.data[instance_index_interp].surface_submission_idx << 16 | uint(instance_index_multimesh);
 #endif
 
 //nothing happens, so a tree-ssa optimizer will result in no fragment shader :)

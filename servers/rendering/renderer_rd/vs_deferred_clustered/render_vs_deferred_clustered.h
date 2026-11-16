@@ -222,7 +222,8 @@ private:
 			float uv_scale[4];
 			uint32_t flags;
 			uint32_t layer_mask;
-			uint32_t pad[2];
+			uint32_t surface_submission_idx;
+			uint32_t pad[1];
 #ifdef REAL_T_IS_DOUBLE
 			float model_precision[4];
 #endif

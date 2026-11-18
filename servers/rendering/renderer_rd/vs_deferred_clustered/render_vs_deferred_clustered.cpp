@@ -52,12 +52,12 @@ void RenderVsDeferredClustered::RenderBufferDataVsDeferredClustered::ensure_norm
 		render_buffers->create_texture(RB_SCOPE_VS_DEFERRED_CLUSTERED, RB_TEX_NORMAL_ROUGHNESS, RD::DATA_FORMAT_R8G8B8A8_UNORM, RenderSceneBuffersRD::get_color_usage_bits(false, false, render_buffers->get_can_be_storage()));
 	}
 }
-void RendererSceneRenderImplementation::RenderVsDeferredClustered::RenderBufferDataVsDeferredClustered::ensure_visibility_buffer()
-{
+void RendererSceneRenderImplementation::RenderVsDeferredClustered::RenderBufferDataVsDeferredClustered::ensure_visibility_buffer() {
 	ERR_FAIL_NULL(render_buffers);
 
 	if (!render_buffers->has_texture(RB_SCOPE_VS_DEFERRED_CLUSTERED, RB_BUF_VISIBILITY)) {
-		render_buffers->create_texture(RB_SCOPE_VS_DEFERRED_CLUSTERED, RB_BUF_VISIBILITY, RD::DATA_FORMAT_R32G32_UINT, RenderSceneBuffersRD::get_color_usage_bits(false, false, render_buffers->get_can_be_storage()));
+		// CAN_COPY_FROM allows reading it back for debugging (texture_get_data).
+		render_buffers->create_texture(RB_SCOPE_VS_DEFERRED_CLUSTERED, RB_BUF_VISIBILITY, RD::DATA_FORMAT_R32G32_UINT, RenderSceneBuffersRD::get_color_usage_bits(false, false, render_buffers->get_can_be_storage()) | RD::TEXTURE_USAGE_CAN_COPY_FROM_BIT);
 	}
 }
 
@@ -68,6 +68,8 @@ void RenderVsDeferredClustered::RenderBufferDataVsDeferredClustered::free_data()
 		render_buffers->clear_context(RB_SCOPE_SSDS);
 		render_buffers->clear_context(RB_SCOPE_SSAO);
 	}
+
+	RendererRD::DeferredShader::sort_free_buffers(sort);
 
 	if (cluster_builder) {
 		memdelete(cluster_builder);
@@ -448,7 +450,7 @@ void RenderVsDeferredClustered::_fill_instance_data(RenderListType p_render_list
 
 		if (prev_surface != nullptr && !cant_repeat && prev_surface->sort.sort_key1 == surface->sort.sort_key1 && prev_surface->sort.sort_key2 == surface->sort.sort_key2 && inst->mirror == prev_surface->owner->mirror && repeats < RenderElementInfo::MAX_REPEATS) {
 			//set surface ids to the surface of the 1st instance
-			instance_data.surface_submission_idx = i - repeats;
+			instance_data.surface_submission_idx = scene_state.curr_gpu_ptr[p_render_list][i - 1 + p_offset].surface_submission_idx;
 			//this element is the same as the previous one, count repeats to draw it using instancing
 			repeats++;
 		} else {
@@ -860,10 +862,20 @@ void RenderVsDeferredClustered::_render_scene(RenderDataRD *p_render_data, const
 
 		RID rp_uniform_set = _setup_render_pass_uniform_set(RENDER_LIST_OPAQUE, nullptr, RID(), samplers, depth_prepass_uniform_buffer_index);
 		RenderList &rl = render_list[RENDER_LIST_OPAQUE];
-		RenderListParameters render_list_params(rl.elements.ptr(), rl.element_info.ptr(), rl.elements.size(), reverse_cull, PASS_MODE_VISIBILITY , 0, rp_uniform_set);
+		RenderListParameters render_list_params(rl.elements.ptr(), rl.element_info.ptr(), rl.elements.size(), reverse_cull, PASS_MODE_VISIBILITY, 0, rp_uniform_set);
 		_render_list_with_draw_list(&render_list_params, rb_data->get_visibility_fb(), RD::DRAW_CLEAR_ALL, vis_pass_clear, 0.0f, p_render_data->render_region);
 
 		RD::get_singleton()->draw_command_end_label();
+	}
+
+	const bool sort_supported = rb->get_view_count() == 1;
+	if (sort_supported) {
+		RENDER_TIMESTAMP("Sort Pixels Per Surface");
+		//TODO: count unique surfaces in _fill_render_list instead of using total value. The surface buffer must be made less sparse.
+		deferred_shader->sort_allocate_buffers(rb_data->sort, render_list[RENDER_LIST_OPAQUE].elements.size());
+		deferred_shader->sort_pixels(rb_data->sort, rb_data->get_visibility_buffer(), screen_size);
+	} else {
+		WARN_PRINT_ONCE("The visibility buffer sort pass does not support multiview yet.");
 	}
 
 	/* 2. Shadow passes */
@@ -1674,12 +1686,18 @@ RenderVsDeferredClustered::RenderVsDeferredClustered() {
 	_create_lut(dfg_lut, RD::DATA_FORMAT_R16G16B16A16_SFLOAT, 128);
 
 	ss_effects = memnew(RendererRD::SSEffects);
+	deferred_shader = memnew(RendererRD::DeferredShader);
 }
 
 RenderVsDeferredClustered::~RenderVsDeferredClustered() {
 	if (ss_effects != nullptr) {
 		memdelete(ss_effects);
 		ss_effects = nullptr;
+	}
+
+	if (deferred_shader != nullptr) {
+		memdelete(deferred_shader);
+		deferred_shader = nullptr;
 	}
 
 	RSG::light_storage->directional_shadow_atlas_set_size(0);

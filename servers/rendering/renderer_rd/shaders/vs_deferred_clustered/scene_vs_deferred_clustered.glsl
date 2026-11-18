@@ -1325,7 +1325,7 @@ void fragment_shader(in SceneData scene_data) {
 #ifdef MODE_RENDER_VISIBILITY
 	//TODO: I may want to build visbuffer Id dynamically based on multimesh ON/OFF
 	visibility_buffer.x = uint(gl_PrimitiveID) + 1u;
-	visibility_buffer.y = instances.data[instance_index_interp].surface_submission_idx << 16 | uint(instance_index_multimesh);
+	visibility_buffer.y = instances.data[instance_index_interp].surface_submission_idx << 16 | (instance_index_multimesh & 0xFFFFu);
 #endif
 
 //nothing happens, so a tree-ssa optimizer will result in no fragment shader :)

@@ -37,6 +37,8 @@
 #include "servers/rendering/renderer_rd/renderer_scene_render_rd.h"
 #include "servers/rendering/renderer_rd/shaders/best_fit_normal.glsl.gen.h"
 #include "servers/rendering/renderer_rd/shaders/integrate_dfg.glsl.gen.h"
+#include "servers/rendering/renderer_rd/storage_rd/render_data_rd.h"
+#include "servers/rendering/renderer_rd/vs_deferred_clustered/deferred_shader.h"
 #include "servers/rendering/renderer_rd/vs_deferred_clustered/scene_shader_vs_deferred_clustered.h"
 
 #define RB_SCOPE_VS_DEFERRED_CLUSTERED SNAME("vs_deferred_clustered")
@@ -96,6 +98,12 @@ public:
 	public:
 		ClusterBuilderRD *cluster_builder = nullptr;
 		RendererRD::SSEffects::SSAORenderBuffers ssao;
+		RendererRD::DeferredShader::SortBuffers sort;
+
+		// Results of the pixel sort pass for the current frame
+		RID get_surface_count_buffer() const { return sort.surface_count_buffer; }
+		RID get_dispatch_args_buffer() const { return sort.dispatch_args_buffer; }
+		uint32_t get_sorted_surface_count() const { return sort.surface_count; }
 
 		void ensure_normal_roughness_texture();
 		bool has_normal_roughness() const { return render_buffers->has_texture(RB_SCOPE_VS_DEFERRED_CLUSTERED, RB_TEX_NORMAL_ROUGHNESS); }
@@ -485,6 +493,8 @@ private:
 	void _render_shadows(RenderDataRD *p_render_data);
 	void _process_ssao(RenderDataRD *p_render_data, RID p_normal_roughness);
 	void _setup_lights(RenderDataRD *p_render_data);
+
+	RendererRD::DeferredShader *deferred_shader = nullptr;
 
 protected:
 	/* setup */

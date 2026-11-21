@@ -69,7 +69,7 @@ void RenderVsDeferredClustered::RenderBufferDataVsDeferredClustered::free_data()
 		render_buffers->clear_context(RB_SCOPE_SSAO);
 	}
 
-	RendererRD::DeferredShader::sort_free_buffers(sort);
+	RendererRD::VisibilityPreprocessor::sort_free_buffers(sort);
 
 	if (cluster_builder) {
 		memdelete(cluster_builder);
@@ -872,8 +872,8 @@ void RenderVsDeferredClustered::_render_scene(RenderDataRD *p_render_data, const
 	if (sort_supported) {
 		RENDER_TIMESTAMP("Deferred Shading Preprocessing");
 		//TODO: count unique surfaces in _fill_render_list instead of using total value. The surface buffer must be made less sparse.
-		deferred_shader->sort_allocate_buffers(rb_data->sort, screen_size, render_list[RENDER_LIST_OPAQUE].elements.size());
-		deferred_shader->sort_pixels(rb_data->sort, rb_data->get_visibility_buffer(), screen_size);
+		visbility_preprocessor->sort_allocate_buffers(rb_data->sort, screen_size, render_list[RENDER_LIST_OPAQUE].elements.size());
+		visbility_preprocessor->sort_pixels(rb_data->sort, rb_data->get_visibility_buffer(), screen_size);
 	} else {
 		WARN_PRINT_ONCE("The visibility buffer sort pass does not support multiview yet.");
 	}
@@ -1686,7 +1686,7 @@ RenderVsDeferredClustered::RenderVsDeferredClustered() {
 	_create_lut(dfg_lut, RD::DATA_FORMAT_R16G16B16A16_SFLOAT, 128);
 
 	ss_effects = memnew(RendererRD::SSEffects);
-	deferred_shader = memnew(RendererRD::DeferredShader);
+	visbility_preprocessor = memnew(RendererRD::VisibilityPreprocessor);
 }
 
 RenderVsDeferredClustered::~RenderVsDeferredClustered() {
@@ -1695,9 +1695,9 @@ RenderVsDeferredClustered::~RenderVsDeferredClustered() {
 		ss_effects = nullptr;
 	}
 
-	if (deferred_shader != nullptr) {
-		memdelete(deferred_shader);
-		deferred_shader = nullptr;
+	if (visbility_preprocessor != nullptr) {
+		memdelete(visbility_preprocessor);
+		visbility_preprocessor = nullptr;
 	}
 
 	RSG::light_storage->directional_shadow_atlas_set_size(0);

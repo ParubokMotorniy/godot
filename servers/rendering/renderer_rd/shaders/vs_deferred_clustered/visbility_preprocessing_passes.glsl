@@ -4,10 +4,10 @@
 
 #VERSION_DEFINES
 
-// Variants (DeferredShader::SortMode):
+// Variants (VisibilityPreprocessor::SortMode):
 //   MODE_COUNT:          one thread per pixel, counts the covered pixels of every surface.
 //   MODE_DISPATCH_ARGS:  one thread per surface, turns the counts into DispatchIndirectCommand arguments.
-// RECONSTRUCT_LOCAL_SIZE comes from DeferredShader::RECONSTRUCT_LOCAL_SIZE.
+// RECONSTRUCT_LOCAL_SIZE comes from VisibilityPreprocessor::RECONSTRUCT_LOCAL_SIZE.
 
 layout(push_constant, std430) uniform Params {
 	uvec2 screen_size;

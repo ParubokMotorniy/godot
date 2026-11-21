@@ -38,7 +38,7 @@
 #include "servers/rendering/renderer_rd/shaders/best_fit_normal.glsl.gen.h"
 #include "servers/rendering/renderer_rd/shaders/integrate_dfg.glsl.gen.h"
 #include "servers/rendering/renderer_rd/storage_rd/render_data_rd.h"
-#include "servers/rendering/renderer_rd/vs_deferred_clustered/deferred_shader.h"
+#include "servers/rendering/renderer_rd/vs_deferred_clustered/visbility_preprocessor.h"
 #include "servers/rendering/renderer_rd/vs_deferred_clustered/scene_shader_vs_deferred_clustered.h"
 
 #define RB_SCOPE_VS_DEFERRED_CLUSTERED SNAME("vs_deferred_clustered")
@@ -98,7 +98,7 @@ public:
 	public:
 		ClusterBuilderRD *cluster_builder = nullptr;
 		RendererRD::SSEffects::SSAORenderBuffers ssao;
-		RendererRD::DeferredShader::SortBuffers sort;
+		RendererRD::VisibilityPreprocessor::SortBuffers sort;
 
 		// Results of the pixel sort pass for the current frame
 		RID get_surface_count_buffer() const { return sort.surface_count_buffer; }
@@ -494,7 +494,7 @@ private:
 	void _process_ssao(RenderDataRD *p_render_data, RID p_normal_roughness);
 	void _setup_lights(RenderDataRD *p_render_data);
 
-	RendererRD::DeferredShader *deferred_shader = nullptr;
+	RendererRD::VisibilityPreprocessor *visbility_preprocessor = nullptr;
 
 protected:
 	/* setup */

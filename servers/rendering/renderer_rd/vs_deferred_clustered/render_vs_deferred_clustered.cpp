@@ -870,9 +870,9 @@ void RenderVsDeferredClustered::_render_scene(RenderDataRD *p_render_data, const
 
 	const bool sort_supported = rb->get_view_count() == 1;
 	if (sort_supported) {
-		RENDER_TIMESTAMP("Sort Pixels Per Surface");
+		RENDER_TIMESTAMP("Deferred Shading Preprocessing");
 		//TODO: count unique surfaces in _fill_render_list instead of using total value. The surface buffer must be made less sparse.
-		deferred_shader->sort_allocate_buffers(rb_data->sort, render_list[RENDER_LIST_OPAQUE].elements.size());
+		deferred_shader->sort_allocate_buffers(rb_data->sort, screen_size, render_list[RENDER_LIST_OPAQUE].elements.size());
 		deferred_shader->sort_pixels(rb_data->sort, rb_data->get_visibility_buffer(), screen_size);
 	} else {
 		WARN_PRINT_ONCE("The visibility buffer sort pass does not support multiview yet.");

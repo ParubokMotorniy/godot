@@ -22,6 +22,7 @@ public:
 	struct SortBuffers {
 		RID surface_count_buffer;
 		RID dispatch_args_buffer;
+		RID pixel_list_buffer;
 		uint32_t capacity = 0;
 		uint32_t surface_count = 0;
 	};
@@ -29,7 +30,7 @@ public:
 	DeferredShader();
 	~DeferredShader();
 
-	void sort_allocate_buffers(SortBuffers &p_buffers, uint32_t p_surface_count);
+	void sort_allocate_buffers(SortBuffers &p_buffers, const Size2i &p_size, uint32_t p_surface_count);
 	static void sort_free_buffers(SortBuffers &p_buffers);
 	void sort_pixels(const SortBuffers &p_buffers, RID p_visibility_buffer, const Size2i &p_size);
 
@@ -37,6 +38,8 @@ private:
 	enum SortMode {
 		SORT_MODE_COUNT,
 		SORT_MODE_DISPATCH_ARGS,
+		SORT_MODE_PREFIX_SUM,
+		SORT_MODE_SORT_PIXELS,
 		SORT_MODE_MAX
 	};
 

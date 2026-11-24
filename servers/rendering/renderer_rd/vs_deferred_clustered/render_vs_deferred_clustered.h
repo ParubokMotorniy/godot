@@ -38,8 +38,8 @@
 #include "servers/rendering/renderer_rd/shaders/best_fit_normal.glsl.gen.h"
 #include "servers/rendering/renderer_rd/shaders/integrate_dfg.glsl.gen.h"
 #include "servers/rendering/renderer_rd/storage_rd/render_data_rd.h"
-#include "servers/rendering/renderer_rd/vs_deferred_clustered/visbility_preprocessor.h"
 #include "servers/rendering/renderer_rd/vs_deferred_clustered/scene_shader_vs_deferred_clustered.h"
+#include "servers/rendering/renderer_rd/vs_deferred_clustered/visbility_preprocessor.h"
 
 #define RB_SCOPE_VS_DEFERRED_CLUSTERED SNAME("vs_deferred_clustered")
 
@@ -111,7 +111,7 @@ public:
 
 		void ensure_visibility_buffer();
 		bool has_visibility_buffer() const { return render_buffers->has_texture(RB_SCOPE_VS_DEFERRED_CLUSTERED, RB_BUF_VISIBILITY); }
-		RID get_visibility_buffer() const { return render_buffers->get_texture(RB_SCOPE_VS_DEFERRED_CLUSTERED,RB_BUF_VISIBILITY); }
+		RID get_visibility_buffer() const { return render_buffers->get_texture(RB_SCOPE_VS_DEFERRED_CLUSTERED, RB_BUF_VISIBILITY); }
 
 		RID get_color_fb();
 		RID get_depth_fb(bool p_normal_roughness);
@@ -135,9 +135,13 @@ private:
 	virtual void setup_render_buffer_data(Ref<RenderSceneBuffersRD> p_render_buffers) override;
 
 	RID render_base_uniform_set;
+	RID deferred_render_base_uniform_set;
 
 	void _update_render_base_uniform_set();
+
+	LocalVector<RD::Uniform> _build_render_pass_uniform_set(RenderListType p_render_list, const RenderDataRD *p_render_data, RID p_radiance_texture, const RendererRD::MaterialStorage::Samplers &p_samplers, uint32_t p_uniform_buffer_index, bool p_use_directional_shadow_atlas = false);
 	RID _setup_render_pass_uniform_set(RenderListType p_render_list, const RenderDataRD *p_render_data, RID p_radiance_texture, const RendererRD::MaterialStorage::Samplers &p_samplers, uint32_t p_uniform_buffer_index, bool p_use_directional_shadow_atlas = false);
+	RID _setup_deffered_shading_uniform_set(RenderListType p_render_list, const RenderDataRD *p_render_data, RID p_radiance_texture, const RendererRD::MaterialStorage::Samplers &p_samplers, uint32_t p_uniform_buffer_index, bool p_use_directional_shadow_atlas = false);
 
 	struct BestFitNormal {
 		BestFitNormalShaderRD shader;
@@ -160,6 +164,7 @@ private:
 		PASS_MODE_DEPTH,
 		PASS_MODE_DEPTH_NORMAL_ROUGHNESS,
 		PASS_MODE_VISIBILITY,
+		PASS_MODE_DEFERRED_SHADING,
 	};
 
 	enum ColorPassFlags {
@@ -319,6 +324,8 @@ private:
 
 	void _render_list(RenderingDevice::DrawListID p_draw_list, RenderingDevice::FramebufferFormatID p_framebuffer_format, RenderListParameters *p_params, uint32_t p_from_element, uint32_t p_to_element);
 	void _render_list_with_draw_list(RenderListParameters *p_params, RID p_framebuffer, BitField<RD::DrawFlags> p_draw_flags = RD::DRAW_DEFAULT_ALL, const Vector<Color> &p_clear_color_values = Vector<Color>(), float p_clear_depth_value = 0.0, const Rect2 &p_region = Rect2());
+
+	void _deferred_compute_list(RenderListParameters *p_params, BitField<RD::DrawFlags> p_draw_flags = RD::DRAW_DEFAULT_ALL, const Vector<Color> &p_clear_color_values = Vector<Color>(), float p_clear_depth_value = 0.0, const Rect2 &p_region = Rect2());
 
 	void _fill_instance_data(RenderListType p_render_list, int *p_render_info = nullptr, uint32_t p_offset = 0, int32_t p_max_elements = -1, bool p_update_buffer = true);
 	void _fill_render_list(RenderListType p_render_list, const RenderDataRD *p_render_data, PassMode p_pass_mode, bool p_append = false);

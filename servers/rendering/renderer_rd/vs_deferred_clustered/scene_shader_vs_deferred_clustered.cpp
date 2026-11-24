@@ -193,6 +193,17 @@ Pair<ShaderRD *, RID> SceneShaderVsDeferredClustered::ShaderData::get_native_sha
 }
 
 void SceneShaderVsDeferredClustered::ShaderData::_create_pipeline(PipelineKey p_pipeline_key) {
+	if (p_pipeline_key.version == PIPELINE_VERSION_DEFERRED_SHADING) {
+		RID shader_rid = get_shader_variant(p_pipeline_key.version);
+		ERR_FAIL_COND(shader_rid.is_null());
+
+		RID pipeline = RD::get_singleton()->compute_pipeline_create(shader_rid);
+		ERR_FAIL_COND(pipeline.is_null());
+
+		pipeline_hash_map.add_compiled_pipeline(p_pipeline_key.hash(), pipeline);
+		return;
+	}
+
 	// Color pass -> attachment 0: Color.
 	RD::PipelineColorBlendState blend_state;
 	RD::PipelineDepthStencilState depth_stencil_state;
@@ -379,6 +390,7 @@ void SceneShaderVsDeferredClustered::init(const String p_defines) {
 		shader_versions.push_back("\n#define MODE_RENDER_DEPTH\n#define MODE_RENDER_NORMAL_ROUGHNESS\n"); // PIPELINE_VERSION_DEPTH_PASS_WITH_NORMAL_AND_ROUGHNESS
 		shader_versions.push_back(""); // PIPELINE_VERSION_COLOR_PASS (opaque and transparent)
 		shader_versions.push_back("\n#define MODE_RENDER_DEPTH\n#define MODE_RENDER_VISIBILITY\n"); // PIPELINE_VERSION_VISIBILITY_PASS
+		shader_versions.push_back("\ndefine DEFERRED_SHADING");
 
 		Vector<uint64_t> dynamic_buffers;
 		dynamic_buffers.push_back(ShaderRD::DynamicBuffer::encode(RenderVsDeferredClustered::RENDER_PASS_UNIFORM_SET, 2));
@@ -549,6 +561,7 @@ void fragment() {
 
 		MaterialData *md = static_cast<MaterialData *>(material_storage->material_get_data(default_material, RendererRD::MaterialStorage::SHADER_TYPE_3D));
 		default_shader_rd = md->shader_data->get_shader_variant(PIPELINE_VERSION_COLOR_PASS);
+		deferred_shader_rd = md->shader_data->get_shader_variant(PIPELINE_VERSION_DEFERRED_SHADING);
 	}
 
 	{
@@ -561,6 +574,7 @@ void fragment() {
 		uniforms.push_back(u);
 
 		default_vec4_xform_uniform_set = RD::get_singleton()->uniform_set_create(uniforms, default_shader_rd, RenderVsDeferredClustered::TRANSFORMS_UNIFORM_SET);
+		deferred_default_vec4_xform_uniform_set = RD::get_singleton()->uniform_set_create(uniforms, deferred_shader_rd, RenderVsDeferredClustered::TRANSFORMS_UNIFORM_SET);
 	}
 	{
 		RD::SamplerState sampler;

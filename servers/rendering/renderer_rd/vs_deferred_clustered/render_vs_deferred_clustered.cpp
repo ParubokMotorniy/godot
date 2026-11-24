@@ -31,6 +31,7 @@
 #include "render_vs_deferred_clustered.h"
 
 #include "core/config/project_settings.h"
+#include "core/error/error_macros.h"
 #include "servers/rendering/renderer_rd/framebuffer_cache_rd.h"
 #include "servers/rendering/renderer_rd/storage_rd/light_storage.h"
 #include "servers/rendering/renderer_rd/storage_rd/mesh_storage.h"
@@ -187,6 +188,9 @@ void RenderVsDeferredClustered::_render_list(RenderingDevice::DrawListID p_draw_
 		case PASS_MODE_VISIBILITY:
 			pipeline_key.version = SceneShaderVsDeferredClustered::PIPELINE_VERSION_VISIBILITY_PASS;
 			break;
+		case PASS_MODE_DEFERRED_SHADING:
+			ERR_FAIL_MSG("_render_list should not be used with PASS_MODE_DEFERRED_SHADING!");
+			break;
 	}
 
 	RID prev_material_uniform_set;
@@ -329,6 +333,141 @@ void RenderVsDeferredClustered::_render_list_with_draw_list(RenderListParameters
 	RD::DrawListID draw_list = RD::get_singleton()->draw_list_begin(p_framebuffer, p_draw_flags, p_clear_color_values, p_clear_depth_value, 0, p_region);
 	_render_list(draw_list, fb_format, p_params, 0, p_params->element_count);
 	RD::get_singleton()->draw_list_end();
+}
+
+//TODO: make actual use of the 'auto' opaque parmeters here, e.g. replicate manually
+//TODO: clear buffers when needed
+void RendererSceneRenderImplementation::RenderVsDeferredClustered::_deferred_compute_list(RenderListParameters *p_params, BitField<RD::DrawFlags> p_draw_flags, const Vector<Color> &p_clear_color_values, float p_clear_depth_value, const Rect2 &p_region) {
+	RD::DrawListID draw_list = RD::get_singleton()->compute_list_begin();
+
+	RendererRD::MeshStorage *mesh_storage = RendererRD::MeshStorage::get_singleton();
+	RenderingDevice *rd = RD::get_singleton();
+
+	const PassMode pass_mode = p_params->pass_mode;
+
+	if (pass_mode != PASS_MODE_DEFERRED_SHADING) {
+		ERR_FAIL_MSG("Deferred compute shading list dispatch invoked for wrong pass mode!");
+	}
+
+	//global scope bindings
+	rd->draw_list_bind_uniform_set(draw_list, deferred_render_base_uniform_set, SCENE_UNIFORM_SET);
+	rd->draw_list_bind_uniform_set(draw_list, p_params->render_pass_uniform_set, RENDER_PASS_UNIFORM_SET);
+	rd->draw_list_bind_uniform_set(draw_list, scene_shader.deferred_default_vec4_xform_uniform_set, TRANSFORMS_UNIFORM_SET);
+
+	const bool color_pass = pass_mode == PASS_MODE_COLOR || pass_mode == PASS_MODE_DEFERRED_SHADING;
+
+	SceneShaderVsDeferredClustered::ShaderData::PipelineKey pipeline_key;
+	pipeline_key.version = SceneShaderVsDeferredClustered::PIPELINE_VERSION_DEFERRED_SHADING;
+
+	//these make no sense for manual compute shading
+	pipeline_key.vertex_format_id = 0;
+	pipeline_key.framebuffer_format_id = 0;
+	pipeline_key.color_pass_flags = 0;
+	pipeline_key.cull_mode = RD::PolygonCullMode::POLYGON_CULL_DISABLED;
+
+	RID prev_material_uniform_set;
+	RID prev_xforms_uniform_set;
+	RID prev_pipeline_rd;
+
+	SceneState::PushConstant push_constant = {};
+
+	for (uint32_t i = 0; i < p_params->element_count; i++) {
+		const GeometryInstanceSurfaceDataCache *surf = p_params->elements[i];
+		const RenderElementInfo &element_info = p_params->element_info[i];
+
+		if (color_pass && surf->color_pass_inclusion_mask && (p_params->color_pass_flags & surf->color_pass_inclusion_mask) == 0) {
+			// Surfaces can be in both lists (e.g. alpha with depth pre-pass); exclude them from the color pass they don't belong to.
+			continue;
+		}
+
+		if (surf->owner->instance_count == 0) {
+			continue;
+		}
+
+		push_constant.base_index = i + p_params->element_offset;
+
+		RID material_uniform_set;
+		SceneShaderVsDeferredClustered::ShaderData *shader;
+
+		void *mesh_surface = surf->surface;
+		if (!mesh_surface) {
+			continue;
+		}
+
+		material_uniform_set = surf->material_uniform_set;
+		shader = surf->shader;
+		if (color_pass) {
+			surf->material->set_as_used();
+		}
+
+		pipeline_key.primitive_type = surf->primitive;
+
+		SceneShaderVsDeferredClustered::ShaderSpecialization &specialization = pipeline_key.shader_specialization;
+		specialization = {};
+		specialization.multimesh = bool(surf->owner->base_flags & INSTANCE_DATA_FLAG_MULTIMESH);
+		specialization.multimesh_format_2d = bool(surf->owner->base_flags & INSTANCE_DATA_FLAG_MULTIMESH_FORMAT_2D);
+		specialization.multimesh_has_color = bool(surf->owner->base_flags & INSTANCE_DATA_FLAG_MULTIMESH_HAS_COLOR);
+		specialization.multimesh_has_custom_data = bool(surf->owner->base_flags & INSTANCE_DATA_FLAG_MULTIMESH_HAS_CUSTOM_DATA);
+
+		// Skeleton and blend shape.
+		RID vertex_array_rd;
+		RD::VertexFormatID vertex_format = -1;
+		uint64_t input_mask = shader->get_vertex_input_mask(pipeline_key.version);
+		if (surf->owner->mesh_instance.is_valid()) {
+			mesh_storage->mesh_instance_surface_get_vertex_arrays_and_format(surf->owner->mesh_instance, surf->surface_index, input_mask, false, false, vertex_array_rd, vertex_format);
+		} else {
+			mesh_storage->mesh_surface_get_vertex_arrays_and_format(mesh_surface, input_mask, false, false, vertex_array_rd, vertex_format);
+		}
+
+		// Pipelines are compiled synchronously the first time they are needed.
+		RID pipeline_rd = shader->pipeline_hash_map.get_pipeline(pipeline_key, pipeline_key.hash(), true, RSE::PIPELINE_SOURCE_DRAW);
+
+		if (pipeline_rd.is_valid()) {
+			if (prev_pipeline_rd != pipeline_rd) {
+				rd->draw_list_bind_render_pipeline(draw_list, pipeline_rd);
+				prev_pipeline_rd = pipeline_rd;
+			}
+
+			RID xforms_uniform_set = surf->owner->transforms_uniform_set;
+			if (xforms_uniform_set.is_valid() && prev_xforms_uniform_set != xforms_uniform_set) {
+				rd->draw_list_bind_uniform_set(draw_list, xforms_uniform_set, TRANSFORMS_UNIFORM_SET);
+				prev_xforms_uniform_set = xforms_uniform_set;
+			}
+
+			if (material_uniform_set != prev_material_uniform_set) {
+				// Update uniform set.
+				if (material_uniform_set.is_valid() && rd->uniform_set_is_valid(material_uniform_set)) { // Material may not have a uniform set.
+					rd->draw_list_bind_uniform_set(draw_list, material_uniform_set, MATERIAL_UNIFORM_SET);
+				}
+
+				prev_material_uniform_set = material_uniform_set;
+			}
+
+			// Multimesh buffers may be double buffered (for motion vectors), get the offset of the current frame.
+			uint32_t unused_previous_offset = 0;
+			if (surf->owner->base_flags & INSTANCE_DATA_FLAG_MULTIMESH) {
+				mesh_storage->_multimesh_get_motion_vectors_offsets(surf->owner->data->base, push_constant.multimesh_offset, unused_previous_offset);
+			} else {
+				push_constant.multimesh_offset = 0;
+			}
+
+			rd->draw_list_set_push_constant(draw_list, &push_constant, sizeof(SceneState::PushConstant));
+
+			uint32_t instance_count = surf->owner->instance_count > 1 ? surf->owner->instance_count : element_info.repeat;
+
+			if (surf->owner->base_flags & INSTANCE_DATA_FLAG_MULTIMESH_INDIRECT) {
+				//TODO: dispatch instanced deferred shading
+				// rd->draw_list_draw_indirect(draw_list, index_array_rd.is_valid(), mesh_storage->_multimesh_get_command_buffer_rd_rid(surf->owner->data->base), surf->surface_index * sizeof(uint32_t) * mesh_storage->INDIRECT_MULTIMESH_COMMAND_STRIDE, 1, 0);
+			} else {
+				//TODO: dispatch non-instanced deferred shading
+				// rd->draw_list_draw(draw_list, index_array_rd.is_valid(), instance_count);
+			}
+		}
+
+		i += element_info.repeat - 1; //skip equal elements
+	}
+
+	RD::get_singleton()->compute_list_end();
 }
 
 uint32_t RenderVsDeferredClustered::_setup_environment(const RenderDataRD *p_render_data, const Size2i &p_screen_size, const Size2 &p_viewport_size, const Color &p_default_bg_color, bool p_opaque_render_buffers, bool p_pancake_shadows) {
@@ -919,6 +1058,28 @@ void RenderVsDeferredClustered::_render_scene(RenderDataRD *p_render_data, const
 		RD::get_singleton()->draw_command_end_label();
 	}
 
+	/* Opaque deferred pass */
+	{
+		RENDER_TIMESTAMP("Render Deferred Opaque Pass");
+		RD::get_singleton()->draw_command_begin_label("Render Deferred Opaque Pass");
+
+		uint32_t opaque_pass_uniform_buffer_index = _setup_environment(p_render_data, screen_size, screen_size, p_default_bg_color, true);
+		RID rp_uniform_set = _setup_deffered_shading_uniform_set(RENDER_LIST_OPAQUE, p_render_data, radiance_texture, samplers, opaque_pass_uniform_buffer_index, true);
+
+		Vector<Color> c;
+		if (!load_color) {
+			Color cc = clear_color.srgb_to_linear();
+			cc.a = 0; // Same as Forward+.
+			c.push_back(cc);
+		}
+
+		RenderList &rl = render_list[RENDER_LIST_OPAQUE];
+		RenderListParameters render_list_params(rl.elements.ptr(), rl.element_info.ptr(), rl.elements.size(), reverse_cull, PASS_MODE_COLOR, 0, rp_uniform_set);
+		_deferred_compute_list(&render_list_params, load_color ? RD::DRAW_DEFAULT_ALL : RD::DRAW_CLEAR_COLOR_ALL, c, 0.0f, p_render_data->render_region);
+
+		RD::get_singleton()->draw_command_end_label();
+	}
+
 	/* 6. Sky */
 	if (draw_sky) {
 		RENDER_TIMESTAMP("Render Sky");
@@ -1244,9 +1405,10 @@ void RenderVsDeferredClustered::_update_render_base_uniform_set() {
 	uniforms.push_back(RD::Uniform(RD::UNIFORM_TYPE_TEXTURE, 6, dfg_lut.texture));
 
 	render_base_uniform_set = RD::get_singleton()->uniform_set_create(uniforms, scene_shader.default_shader_rd, SCENE_UNIFORM_SET);
+	deferred_render_base_uniform_set = RD::get_singleton()->uniform_set_create(uniforms, scene_shader.deferred_shader_rd, SCENE_UNIFORM_SET);
 }
 
-RID RenderVsDeferredClustered::_setup_render_pass_uniform_set(RenderListType p_render_list, const RenderDataRD *p_render_data, RID p_radiance_texture, const RendererRD::MaterialStorage::Samplers &p_samplers, uint32_t p_uniform_buffer_index, bool p_use_directional_shadow_atlas) {
+LocalVector<RD::Uniform> RendererSceneRenderImplementation::RenderVsDeferredClustered::_build_render_pass_uniform_set(RenderListType p_render_list, const RenderDataRD *p_render_data, RID p_radiance_texture, const RendererRD::MaterialStorage::Samplers &p_samplers, uint32_t p_uniform_buffer_index, bool p_use_directional_shadow_atlas) {
 	RendererRD::TextureStorage *texture_storage = RendererRD::TextureStorage::get_singleton();
 	RendererRD::LightStorage *light_storage = RendererRD::LightStorage::get_singleton();
 
@@ -1318,7 +1480,16 @@ RID RenderVsDeferredClustered::_setup_render_pass_uniform_set(RenderListType p_r
 		uniforms.push_back(RD::Uniform(RD::UNIFORM_TYPE_TEXTURE, 21, texture));
 	}
 
-	return UniformSetCacheRD::get_singleton()->get_cache_vec(scene_shader.default_shader_rd, RENDER_PASS_UNIFORM_SET, uniforms);
+	//leaves the vector in OK state for this thread
+	return std::move(uniforms);
+}
+
+RID RendererSceneRenderImplementation::RenderVsDeferredClustered::_setup_deffered_shading_uniform_set(RenderListType p_render_list, const RenderDataRD *p_render_data, RID p_radiance_texture, const RendererRD::MaterialStorage::Samplers &p_samplers, uint32_t p_uniform_buffer_index, bool p_use_directional_shadow_atlas) {
+	return UniformSetCacheRD::get_singleton()->get_cache_vec(scene_shader.deferred_shader_rd, RENDER_PASS_UNIFORM_SET, _build_render_pass_uniform_set(p_render_list, p_render_data, p_radiance_texture, p_samplers, p_uniform_buffer_index));
+}
+
+RID RenderVsDeferredClustered::_setup_render_pass_uniform_set(RenderListType p_render_list, const RenderDataRD *p_render_data, RID p_radiance_texture, const RendererRD::MaterialStorage::Samplers &p_samplers, uint32_t p_uniform_buffer_index, bool p_use_directional_shadow_atlas) {
+	return UniformSetCacheRD::get_singleton()->get_cache_vec(scene_shader.default_shader_rd, RENDER_PASS_UNIFORM_SET, _build_render_pass_uniform_set(p_render_list, p_render_data, p_radiance_texture, p_samplers, p_uniform_buffer_index));
 }
 
 RID RenderVsDeferredClustered::_render_buffers_get_normal_texture(Ref<RenderSceneBuffersRD> p_render_buffers) {

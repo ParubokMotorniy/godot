@@ -1363,3 +1363,21 @@ void main() {
 
 	fragment_shader(scene_data_block.data);
 }
+
+#ifdef DEFERRED_SHADING
+
+#[compute]
+
+#include "../half_inc.glsl"
+#include "scene_vs_deferred_clustered_inc.glsl"
+#include "scene_vs_deferred_clustered_lights_inc.glsl"
+
+// TODO: figure this out
+// layout(set = X, binding = Y) uniform usampler2D visibility_buffer;
+
+void main()
+{
+	//TODO: shade pixels from the bound pixel list according to primitive+instance in visbuffer
+}
+
+#endif

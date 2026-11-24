@@ -50,7 +50,6 @@ public:
 		PIPELINE_VERSION_DEPTH_PASS_WITH_NORMAL_AND_ROUGHNESS,
 		PIPELINE_VERSION_COLOR_PASS,
 		PIPELINE_VERSION_VISIBILITY_PASS,
-		PIPELINE_VERSION_DEFERRED_SHADING,
 		PIPELINE_VERSION_MAX
 	};
 
@@ -221,11 +220,8 @@ public:
 	RID default_material;
 	RID default_shader_rd;
 
-	RID deferred_shader_rd;
-
 	RID default_vec4_xform_buffer;
 	RID default_vec4_xform_uniform_set;
-	RID deferred_default_vec4_xform_uniform_set;
 
 	RID shadow_sampler;
 

@@ -38,6 +38,7 @@
 #include "servers/rendering/renderer_rd/shaders/best_fit_normal.glsl.gen.h"
 #include "servers/rendering/renderer_rd/shaders/integrate_dfg.glsl.gen.h"
 #include "servers/rendering/renderer_rd/storage_rd/render_data_rd.h"
+#include "servers/rendering/renderer_rd/vs_deferred_clustered/deferred_shader.h"
 #include "servers/rendering/renderer_rd/vs_deferred_clustered/scene_shader_vs_deferred_clustered.h"
 #include "servers/rendering/renderer_rd/vs_deferred_clustered/visbility_preprocessor.h"
 
@@ -63,6 +64,7 @@ namespace RendererSceneRenderImplementation {
  */
 class RenderVsDeferredClustered : public RendererSceneRenderRD {
 	friend SceneShaderVsDeferredClustered;
+	friend DeferredShader;
 
 	enum {
 		SCENE_UNIFORM_SET = 0,
@@ -502,6 +504,7 @@ private:
 	void _setup_lights(RenderDataRD *p_render_data);
 
 	RendererRD::VisibilityPreprocessor *visbility_preprocessor = nullptr;
+	DeferredShader *deferred_shader = nullptr;
 
 protected:
 	/* setup */

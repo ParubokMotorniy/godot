@@ -90,7 +90,7 @@ layout(location = 9) out float dp_clip;
 
 layout(location = 10) out flat uint instance_index_interp;
 
-layout(location = 11) out flat uint instance_index_multimesh;
+layout(location = 11) out flat uint instance_call_index;
 
 invariant gl_Position;
 
@@ -403,12 +403,9 @@ void _unpack_vertex_attributes(vec4 p_vertex_in, vec3 p_compressed_aabb_position
 
 void main() {
 	uint instance_index = draw_call.instance_index;
+	instance_call_index = INSTANCE_INDEX;
 	if (!sc_multimesh()) {
 		instance_index += INSTANCE_INDEX;
-		instance_index_multimesh = 0;
-	}else
-	{
-		instance_index_multimesh = INSTANCE_INDEX;
 	}
 
 	instance_index_interp = instance_index;
@@ -499,7 +496,7 @@ layout(location = 9) in float dp_clip;
 #endif
 
 layout(location = 10) in flat uint instance_index_interp;
-layout(location = 11) in flat uint instance_index_multimesh;
+layout(location = 11) in flat uint instance_call_index;
 
 //defines to keep compatibility with vertex
 
@@ -1325,7 +1322,7 @@ void fragment_shader(in SceneData scene_data) {
 #ifdef MODE_RENDER_VISIBILITY
 	//TODO: I may want to build visbuffer Id dynamically based on multimesh ON/OFF
 	visibility_buffer.x = uint(gl_PrimitiveID) + 1u;
-	visibility_buffer.y = instances.data[instance_index_interp].surface_submission_idx << 16 | (instance_index_multimesh & 0xFFFFu);
+	visibility_buffer.y = instances.data[instance_index_interp].surface_submission_idx << 16 | (instance_call_index & 0xFFFFu);
 #endif
 
 //nothing happens, so a tree-ssa optimizer will result in no fragment shader :)
@@ -1363,25 +1360,3 @@ void main() {
 
 	fragment_shader(scene_data_block.data);
 }
-
-#ifdef DEFERRED_SHADING
-
-#[compute]
-
-#version 450
-
-#VERSION_DEFINES
-
-#include "../half_inc.glsl"
-#include "scene_vs_deferred_clustered_inc.glsl"
-#include "scene_vs_deferred_clustered_lights_inc.glsl"
-
-// TODO: figure this out
-// layout(set = X, binding = Y) uniform usampler2D visibility_buffer;
-
-void main()
-{
-	//TODO: shade pixels from the bound pixel list according to primitive+instance in visbuffer
-}
-
-#endif

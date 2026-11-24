@@ -1368,6 +1368,10 @@ void main() {
 
 #[compute]
 
+#version 450
+
+#VERSION_DEFINES
+
 #include "../half_inc.glsl"
 #include "scene_vs_deferred_clustered_inc.glsl"
 #include "scene_vs_deferred_clustered_lights_inc.glsl"

@@ -1425,6 +1425,10 @@ uint64_t RenderingDevice::buffer_get_device_address(RID p_buffer) {
 	ERR_FAIL_NULL_V_MSG(buffer, 0, "Buffer argument is not a valid buffer of any type.");
 	ERR_FAIL_COND_V_MSG(!buffer->usage.has_flag(RDD::BUFFER_USAGE_DEVICE_ADDRESS_BIT), 0, "Buffer was not created with device address flag.");
 
+	// reads through the address are invisible to RD, so make sure a pending upload from the transfer worker
+	// is submitted with this frame; otherwise a freshly created buffer can be read as zeros.
+	_check_transfer_worker_buffer(buffer);
+
 	return driver->buffer_get_device_address(buffer->driver_id);
 }
 
@@ -4050,6 +4054,11 @@ RID RenderingDevice::index_buffer_create(uint32_t p_index_count, IndexBufferForm
 	index_buffer.max_index = 0xFFFFFFFF;
 #endif
 	index_buffer.size = size_bytes;
+	if (p_creation_bits.has_flag(BUFFER_CREATION_DEVICE_ADDRESS_BIT)) {
+		// shaders read indices as 32-bit words through the buffer address, so a 16-bit index buffer with an odd
+		// index count must not end in the middle of a word. Only the allocation is padded, the index count is unchanged.
+		index_buffer.size = (size_bytes + 3) & ~3u;
+	}
 	index_buffer.usage = (RDD::BUFFER_USAGE_TRANSFER_FROM_BIT | RDD::BUFFER_USAGE_TRANSFER_TO_BIT | RDD::BUFFER_USAGE_INDEX_BIT);
 	if (p_creation_bits.has_flag(BUFFER_CREATION_AS_STORAGE_BIT)) {
 		index_buffer.usage.set_flag(RDD::BUFFER_USAGE_STORAGE_BIT);

@@ -1,3 +1,0 @@
-#[compute]
-
-#version 450

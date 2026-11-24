@@ -1021,6 +1021,7 @@ Error RenderingDeviceDriverVulkan::_check_device_capabilities() {
 			}
 			if (enabled_device_extension_names.has(VK_KHR_BUFFER_DEVICE_ADDRESS_EXTENSION_NAME)) {
 				buffer_device_address_support = device_features_vk_1_2.bufferDeviceAddress;
+				buffer_device_address_capture_replay_support = buffer_device_address_support && device_features_vk_1_2.bufferDeviceAddressCaptureReplay;
 			}
 			if (enabled_device_extension_names.has(VK_KHR_VULKAN_MEMORY_MODEL_EXTENSION_NAME)) {
 				vulkan_memory_model_support = device_features_vk_1_2.vulkanMemoryModel;
@@ -1033,6 +1034,7 @@ Error RenderingDeviceDriverVulkan::_check_device_capabilities() {
 			}
 			if (enabled_device_extension_names.has(VK_KHR_BUFFER_DEVICE_ADDRESS_EXTENSION_NAME)) {
 				buffer_device_address_support = buffer_device_address_features.bufferDeviceAddress;
+				buffer_device_address_capture_replay_support = buffer_device_address_support && buffer_device_address_features.bufferDeviceAddressCaptureReplay;
 			}
 			if (enabled_device_extension_names.has(VK_KHR_VULKAN_MEMORY_MODEL_EXTENSION_NAME)) {
 				vulkan_memory_model_support = vulkan_memory_model_features.vulkanMemoryModel;
@@ -1349,6 +1351,8 @@ Error RenderingDeviceDriverVulkan::_initialize_device(const LocalVector<VkDevice
 		buffer_device_address_features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_BUFFER_DEVICE_ADDRESS_FEATURES_KHR;
 		buffer_device_address_features.pNext = create_info_next;
 		buffer_device_address_features.bufferDeviceAddress = buffer_device_address_support;
+		// BDA: lets RenderDoc capture and replay frames that use buffer device addresses.
+		buffer_device_address_features.bufferDeviceAddressCaptureReplay = buffer_device_address_capture_replay_support;
 		create_info_next = &buffer_device_address_features;
 	}
 

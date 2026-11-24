@@ -390,7 +390,7 @@ void SceneShaderVsDeferredClustered::init(const String p_defines) {
 		shader_versions.push_back("\n#define MODE_RENDER_DEPTH\n#define MODE_RENDER_NORMAL_ROUGHNESS\n"); // PIPELINE_VERSION_DEPTH_PASS_WITH_NORMAL_AND_ROUGHNESS
 		shader_versions.push_back(""); // PIPELINE_VERSION_COLOR_PASS (opaque and transparent)
 		shader_versions.push_back("\n#define MODE_RENDER_DEPTH\n#define MODE_RENDER_VISIBILITY\n"); // PIPELINE_VERSION_VISIBILITY_PASS
-		shader_versions.push_back("\ndefine DEFERRED_SHADING");
+		shader_versions.push_back("\n#define DEFERRED_SHADING");
 
 		Vector<uint64_t> dynamic_buffers;
 		dynamic_buffers.push_back(ShaderRD::DynamicBuffer::encode(RenderVsDeferredClustered::RENDER_PASS_UNIFORM_SET, 2));

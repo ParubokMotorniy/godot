@@ -371,6 +371,7 @@ void RendererSceneRenderImplementation::RenderVsDeferredClustered::_deferred_com
 
 	SceneState::PushConstant push_constant = {};
 
+	//TODO: rework the dispatch to happen once per material
 	for (uint32_t i = 0; i < p_params->element_count; i++) {
 		const GeometryInstanceSurfaceDataCache *surf = p_params->elements[i];
 		const RenderElementInfo &element_info = p_params->element_info[i];

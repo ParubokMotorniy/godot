@@ -30,6 +30,7 @@
 
 #pragma once
 
+#include "core/templates/hash_map.h"
 #include "core/templates/paged_allocator.h"
 #include "servers/rendering/multi_uma_buffer.h"
 #include "servers/rendering/renderer_rd/cluster_builder_rd.h"
@@ -53,11 +54,13 @@ namespace RendererSceneRenderImplementation {
 /* Minimal clustered renderer used as the base for a visibility buffer renderer.
  *
  * Frame (see _render_scene()):
- *   1. depth pre-pass (optionally writing normal/roughness, needed by SSAO),
+ *   1. visibility pass (raster, R32G32_UINT visibility buffer: primitive id + 1, draw group << 16 | instance in draw),
+ *      followed by the sort pass (compute, VisibilityPreprocessor: pixels binned by material slot),
  *   2. shadow passes (directional atlas, positional atlas, cubemap + DP),
  *   3. SSAO compute pass (RendererRD::SSEffects),
  *   4. light/cluster setup,
- *   5. opaque color pass (clustered forward shading),
+ *   5. opaque color pass (clustered forward shading, still produces the image),
+ *      deferred shading pass (compute, one indirect dispatch per material slot, template: decodes geometry only),
  *   6. sky,
  *   7. transparent color pass (back-to-front, blended),
  *   8. tonemap/post-process into the render target (shared code).
@@ -102,10 +105,13 @@ public:
 		RendererRD::SSEffects::SSAORenderBuffers ssao;
 		RendererRD::VisibilityPreprocessor::SortBuffers sort;
 
-		// Results of the pixel sort pass for the current frame
-		RID get_surface_count_buffer() const { return sort.surface_count_buffer; }
-		RID get_dispatch_args_buffer() const { return sort.dispatch_args_buffer; }
-		uint32_t get_sorted_surface_count() const { return sort.surface_count; }
+		// GPU copies of the per-frame deferred records (see _fill_deferred_records()).
+		struct DeferredRecordBuffers {
+			RID draw_records;
+			uint32_t draw_capacity = 0;
+			RID geometry_records;
+			uint32_t geometry_capacity = 0;
+		} deferred_records;
 
 		void ensure_normal_roughness_texture();
 		bool has_normal_roughness() const { return render_buffers->has_texture(RB_SCOPE_VS_DEFERRED_CLUSTERED, RB_TEX_NORMAL_ROUGHNESS); }
@@ -143,7 +149,7 @@ private:
 
 	LocalVector<RD::Uniform> _build_render_pass_uniform_set(RenderListType p_render_list, const RenderDataRD *p_render_data, RID p_radiance_texture, const RendererRD::MaterialStorage::Samplers &p_samplers, uint32_t p_uniform_buffer_index, bool p_use_directional_shadow_atlas = false);
 	RID _setup_render_pass_uniform_set(RenderListType p_render_list, const RenderDataRD *p_render_data, RID p_radiance_texture, const RendererRD::MaterialStorage::Samplers &p_samplers, uint32_t p_uniform_buffer_index, bool p_use_directional_shadow_atlas = false);
-	RID _setup_deffered_shading_uniform_set(RenderListType p_render_list, const RenderDataRD *p_render_data, RID p_radiance_texture, const RendererRD::MaterialStorage::Samplers &p_samplers, uint32_t p_uniform_buffer_index, bool p_use_directional_shadow_atlas = false);
+	RID _setup_deferred_shading_uniform_set(const RenderBufferDataVsDeferredClustered *p_rb_data, const RenderDataRD *p_render_data, RID p_radiance_texture, const RendererRD::MaterialStorage::Samplers &p_samplers, uint32_t p_uniform_buffer_index);
 
 	struct BestFitNormal {
 		BestFitNormalShaderRD shader;
@@ -327,7 +333,78 @@ private:
 	void _render_list(RenderingDevice::DrawListID p_draw_list, RenderingDevice::FramebufferFormatID p_framebuffer_format, RenderListParameters *p_params, uint32_t p_from_element, uint32_t p_to_element);
 	void _render_list_with_draw_list(RenderListParameters *p_params, RID p_framebuffer, BitField<RD::DrawFlags> p_draw_flags = RD::DRAW_DEFAULT_ALL, const Vector<Color> &p_clear_color_values = Vector<Color>(), float p_clear_depth_value = 0.0, const Rect2 &p_region = Rect2());
 
-	void _deferred_compute_list(RenderListParameters *p_params, BitField<RD::DrawFlags> p_draw_flags = RD::DRAW_DEFAULT_ALL, const Vector<Color> &p_clear_color_values = Vector<Color>(), float p_clear_depth_value = 0.0, const Rect2 &p_region = Rect2());
+	/* Deferred (visbuffer) path */
+
+	// Must match deferred_records_inc.glsl (std430).
+	struct DeferredDrawRecord {
+		uint32_t instance_addr[2]; // Multimesh buffer device address, 0 otherwise.
+		uint32_t material_slot;
+		uint32_t geometry_idx;
+		uint32_t multimesh_offset; // Current frame, in instances.
+		uint32_t flags; // INSTANCE_DATA_FLAG_MULTIMESH* bits of the owner.
+		uint32_t instance_count; // 0 = not a group start.
+		uint32_t pad;
+	};
+	static_assert(sizeof(DeferredDrawRecord) == 32);
+
+	enum DeferredGeometryFlags {
+		GEOM_FLAG_INDEXED = 1 << 0,
+		GEOM_FLAG_INDEX16 = 1 << 1,
+		GEOM_FLAG_STRIP = 1 << 2,
+		GEOM_FLAG_COMPRESSED_READ = 1 << 3,
+		GEOM_FLAG_COMPRESSED_UV = 1 << 4,
+		GEOM_FLAG_HAS_NORMAL = 1 << 5,
+		GEOM_FLAG_HAS_UV = 1 << 6,
+		GEOM_FLAG_NOT_TRIANGLES = 1 << 7,
+	};
+
+	struct DeferredGeometryRecord {
+		uint32_t vertex_addr[2];
+		uint32_t attrib_addr[2];
+		uint32_t index_addr[2];
+		uint32_t vertex_count;
+		uint32_t index_count;
+		uint32_t flags; // DeferredGeometryFlags.
+		uint32_t position_stride;
+		uint32_t normal_stride;
+		uint32_t attrib_stride;
+		uint32_t uv_offset;
+		uint32_t pad;
+	};
+	static_assert(sizeof(DeferredGeometryRecord) == 56);
+
+	// Per-frame CPU table: material slot -> what has to be bound to shade it.
+	struct DeferredMaterialSlot {
+		SceneShaderVsDeferredClustered::ShaderData *shader = nullptr;
+		SceneShaderVsDeferredClustered::MaterialData *material = nullptr;
+		RID uniform_set;
+	};
+
+	struct DeferredMaterialKey {
+		const void *shader = nullptr;
+		RID uniform_set;
+		bool operator==(const DeferredMaterialKey &p_other) const { return shader == p_other.shader && uniform_set == p_other.uniform_set; }
+		static uint32_t hash(const DeferredMaterialKey &p_key) { return hash_murmur3_one_64(p_key.uniform_set.get_id(), hash_murmur3_one_64(uint64_t(p_key.shader))); }
+	};
+
+	struct DeferredGeometryKey {
+		const void *surface = nullptr;
+		uint32_t lod = 0;
+		RID mesh_instance; // Skinned / blend shape instances read their own output buffer.
+		bool operator==(const DeferredGeometryKey &p_other) const { return surface == p_other.surface && lod == p_other.lod && mesh_instance == p_other.mesh_instance; }
+		static uint32_t hash(const DeferredGeometryKey &p_key) { return hash_murmur3_one_64(p_key.mesh_instance.get_id(), hash_murmur3_one_64(uint64_t(p_key.surface), p_key.lod)); }
+	};
+
+	struct DeferredFrame {
+		LocalVector<DeferredDrawRecord> draw_records; // Indexed by opaque element (only group starts are filled).
+		LocalVector<DeferredGeometryRecord> geometry_records;
+		LocalVector<DeferredMaterialSlot> material_slots;
+		HashMap<DeferredMaterialKey, uint32_t, DeferredMaterialKey> material_slot_map;
+		HashMap<DeferredGeometryKey, uint32_t, DeferredGeometryKey> geometry_map;
+	} deferred_frame;
+
+	void _fill_deferred_records(RenderBufferDataVsDeferredClustered *p_rb_data);
+	void _deferred_compute_list(RenderBufferDataVsDeferredClustered *p_rb_data, RID p_render_pass_uniform_set);
 
 	void _fill_instance_data(RenderListType p_render_list, int *p_render_info = nullptr, uint32_t p_offset = 0, int32_t p_max_elements = -1, bool p_update_buffer = true);
 	void _fill_render_list(RenderListType p_render_list, const RenderDataRD *p_render_data, PassMode p_pass_mode, bool p_append = false);

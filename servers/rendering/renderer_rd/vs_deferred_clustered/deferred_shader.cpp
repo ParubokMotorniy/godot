@@ -11,7 +11,8 @@ DeferredShader::DeferredShader(const String &p_defines, RID p_default_vec4_xform
 
 	Vector<uint64_t> dynamic_buffers;
 	dynamic_buffers.push_back(ShaderRD::DynamicBuffer::encode(RenderVsDeferredClustered::RENDER_PASS_UNIFORM_SET, 2));
-	shader.initialize(modes, p_defines, Vector<RD::PipelineImmutableSampler>(), dynamic_buffers);
+	const String defines = p_defines + "\n#define DEFERRED_LOCAL_SIZE " + itos(RendererRD::VisibilityPreprocessor::RECONSTRUCT_LOCAL_SIZE) + "\n";
+	shader.initialize(modes, defines, Vector<RD::PipelineImmutableSampler>(), dynamic_buffers);
 
 	shader_version = shader.version_create();
 	shader_rd = shader.version_get_shader(shader_version, 0);

@@ -1320,7 +1320,9 @@ void fragment_shader(in SceneData scene_data) {
 #endif //MODE_RENDER_NORMAL_ROUGHNESS
 
 #ifdef MODE_RENDER_VISIBILITY
-	//TODO: I may want to build visbuffer Id dynamically based on multimesh ON/OFF
+	// .x = primitive id + 1 (0 = empty), .y = draw group (InstanceData slot of the group's first element) << 16 | instance
+	// within the draw (gl_InstanceIndex, for every draw). 
+	// Resolve: InstanceData slot = group + instance for implicit instancing, group + multimesh instance `instance` for multimeshes.
 	visibility_buffer.x = uint(gl_PrimitiveID) + 1u;
 	visibility_buffer.y = instances.data[instance_index_interp].surface_submission_idx << 16 | (instance_call_index & 0xFFFFu);
 #endif

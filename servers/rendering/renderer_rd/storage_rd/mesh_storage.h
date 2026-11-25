@@ -507,6 +507,41 @@ public:
 		}
 	}
 
+	// vs_deferred_clustered: raw buffers of a surface, read through buffer device addresses by its compute passes.
+	struct SurfaceGeometryBuffers {
+		RID vertex_buffer;
+		RID attribute_buffer;
+		RID index_buffer; // Of the requested LOD.
+		uint32_t vertex_count = 0;
+		uint32_t index_count = 0; // Of the requested LOD.
+		uint64_t format = 0;
+		RSE::PrimitiveType primitive = RSE::PRIMITIVE_MAX;
+	};
+
+	_FORCE_INLINE_ void mesh_surface_get_geometry_buffers(void *p_surface, uint32_t p_lod, SurfaceGeometryBuffers &r_buffers) const {
+		Mesh::Surface *s = reinterpret_cast<Mesh::Surface *>(p_surface);
+		r_buffers.vertex_buffer = s->vertex_buffer;
+		r_buffers.attribute_buffer = s->attribute_buffer;
+		r_buffers.vertex_count = s->vertex_count;
+		r_buffers.format = s->format;
+		r_buffers.primitive = s->primitive;
+		if (p_lod == 0 || s->lod_count == 0) {
+			r_buffers.index_buffer = s->index_buffer;
+			r_buffers.index_count = s->index_count;
+		} else {
+			r_buffers.index_buffer = s->lods[p_lod - 1].index_buffer;
+			r_buffers.index_count = s->lods[p_lod - 1].index_count;
+		}
+	}
+
+	// vs_deferred_clustered: skinning / blend shape output buffer of a mesh instance surface that is drawn this frame.
+	_FORCE_INLINE_ RID mesh_instance_surface_get_current_vertex_buffer(RID p_mesh_instance, uint32_t p_surface_index) const {
+		MeshInstance *mi = mesh_instance_owner.get_or_null(p_mesh_instance);
+		ERR_FAIL_NULL_V(mi, RID());
+		ERR_FAIL_UNSIGNED_INDEX_V(p_surface_index, mi->surfaces.size(), RID());
+		return mi->surfaces[p_surface_index].vertex_buffer[mi->surfaces[p_surface_index].current_buffer];
+	}
+
 	_FORCE_INLINE_ void mesh_surface_get_vertex_arrays_and_format(void *p_surface, uint64_t p_input_mask, bool p_input_motion_vectors, bool p_point_size_emulated, RID &r_vertex_array_rd, RD::VertexFormatID &r_vertex_format) {
 		Mesh::Surface *s = reinterpret_cast<Mesh::Surface *>(p_surface);
 

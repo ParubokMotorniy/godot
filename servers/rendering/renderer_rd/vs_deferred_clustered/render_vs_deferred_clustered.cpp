@@ -72,6 +72,14 @@ void RenderVsDeferredClustered::RenderBufferDataVsDeferredClustered::free_data()
 
 	RendererRD::VisibilityPreprocessor::sort_free_buffers(sort);
 
+	RID *record_rids[] = { &deferred_records.draw_records, &deferred_records.geometry_records };
+	for (RID *rid : record_rids) {
+		if (rid->is_valid()) {
+			RD::get_singleton()->free_rid(*rid);
+		}
+	}
+	deferred_records = DeferredRecordBuffers();
+
 	if (cluster_builder) {
 		memdelete(cluster_builder);
 		cluster_builder = nullptr;
@@ -335,17 +343,163 @@ void RenderVsDeferredClustered::_render_list_with_draw_list(RenderListParameters
 	RD::get_singleton()->draw_list_end();
 }
 
-//TODO: make actual use of the 'auto' opaque parmeters here, e.g. replicate manually
-//TODO: clear buffers when needed
-void RendererSceneRenderImplementation::RenderVsDeferredClustered::_deferred_compute_list(RenderListParameters *p_params, BitField<RD::DrawFlags> p_draw_flags, const Vector<Color> &p_clear_color_values, float p_clear_depth_value, const Rect2 &p_region) {
-	const PassMode pass_mode = p_params->pass_mode;
-
-	if (pass_mode != PASS_MODE_DEFERRED_SHADING) {
-		ERR_FAIL_MSG("Deferred compute shading list dispatch invoked for wrong pass mode!");
-	}
-
+void RenderVsDeferredClustered::_fill_deferred_records(RenderBufferDataVsDeferredClustered *p_rb_data) {
 	RendererRD::MeshStorage *mesh_storage = RendererRD::MeshStorage::get_singleton();
 	RenderingDevice *rd = RD::get_singleton();
+	const RenderList &rl = render_list[RENDER_LIST_OPAQUE];
+	DeferredFrame &frame = deferred_frame;
+
+	// Rebuilt every frame (no cross-frame caching yet), deduplicated within the frame.
+	frame.material_slots.clear();
+	frame.material_slot_map.clear();
+	frame.geometry_records.clear();
+	frame.geometry_map.clear();
+
+	uint32_t element_count = rl.elements.size();
+	if (element_count > (1u << 16)) {
+		WARN_PRINT_ONCE(vformat("The visibility buffer can address %d draw groups, the opaque list has %d elements: groups starting from %d on are not shaded by the deferred pass.", 1 << 16, element_count, 1 << 16));
+		element_count = 1u << 16;
+	}
+
+	frame.draw_records.resize(element_count);
+	if (element_count > 0) {
+		memset(frame.draw_records.ptr(), 0, element_count * sizeof(DeferredDrawRecord));
+	}
+
+	auto set_addr = [rd](uint32_t *r_dst, RID p_buffer) {
+		const uint64_t addr = p_buffer.is_valid() ? rd->buffer_get_device_address(p_buffer) : 0;
+		r_dst[0] = uint32_t(addr & 0xFFFFFFFF);
+		r_dst[1] = uint32_t(addr >> 32);
+	};
+
+	// Same grouping as _render_list(): a group starts at element i and covers element_info[i].repeat elements.
+	for (uint32_t i = 0; i < element_count; i += rl.element_info[i].repeat) {
+		const GeometryInstanceSurfaceDataCache *surf = rl.elements[i];
+		const RenderElementInfo &element_info = rl.element_info[i];
+		const GeometryInstanceVsDeferredClustered *owner = surf->owner;
+		DeferredDrawRecord &draw = frame.draw_records[i];
+
+		// Material slot: unique (shader, material uniform set), a draw group always shares one material.
+		const DeferredMaterialKey material_key = { surf->shader, surf->material_uniform_set };
+		const uint32_t *slot = frame.material_slot_map.getptr(material_key);
+		if (slot) {
+			draw.material_slot = *slot;
+		} else {
+			draw.material_slot = frame.material_slots.size();
+			frame.material_slot_map.insert(material_key, draw.material_slot);
+			frame.material_slots.push_back({ surf->shader, surf->material, surf->material_uniform_set });
+		}
+
+		// Geometry record of the drawn (surface, LOD), per mesh instance for skinned / blend shape instances.
+		const DeferredGeometryKey geometry_key = { surf->surface, element_info.lod_index, owner->mesh_instance };
+		const uint32_t *geometry_idx = frame.geometry_map.getptr(geometry_key);
+		if (geometry_idx) {
+			draw.geometry_idx = *geometry_idx;
+		} else {
+			draw.geometry_idx = frame.geometry_records.size();
+			frame.geometry_map.insert(geometry_key, draw.geometry_idx);
+
+			RendererRD::MeshStorage::SurfaceGeometryBuffers buffers;
+			mesh_storage->mesh_surface_get_geometry_buffers(surf->surface, element_info.lod_index, buffers);
+
+			// Skinning / blend shapes write uncompressed positions + normals/tangents into the mesh-instance buffer.
+			const bool instanced = owner->mesh_instance.is_valid();
+			const bool compressed = buffers.format & RSE::ARRAY_FLAG_COMPRESS_ATTRIBUTES;
+			RID vertex_buffer = instanced ? mesh_storage->mesh_instance_surface_get_current_vertex_buffer(owner->mesh_instance, surf->surface_index) : buffers.vertex_buffer;
+
+			DeferredGeometryRecord geometry = {};
+			set_addr(geometry.vertex_addr, vertex_buffer);
+			set_addr(geometry.attrib_addr, buffers.attribute_buffer);
+			set_addr(geometry.index_addr, buffers.index_buffer);
+			geometry.vertex_count = buffers.vertex_count;
+			geometry.index_count = buffers.index_buffer.is_valid() ? buffers.index_count : 0;
+			geometry.position_stride = (!instanced && compressed) ? 8 : 12;
+			geometry.normal_stride = (!instanced && compressed) ? 4 : ((buffers.format & RSE::ARRAY_FORMAT_TANGENT) ? 8 : 4);
+
+			// Attribute stream layout (see MeshStorage::_mesh_surface_generate_version_for_input_mask).
+			geometry.attrib_stride = 0;
+			if (buffers.format & RSE::ARRAY_FORMAT_COLOR) {
+				geometry.attrib_stride += 4;
+			}
+			if (buffers.format & RSE::ARRAY_FORMAT_TEX_UV) {
+				geometry.uv_offset = geometry.attrib_stride;
+				geometry.attrib_stride += compressed ? 4 : 8;
+			}
+			if (buffers.format & RSE::ARRAY_FORMAT_TEX_UV2) {
+				geometry.attrib_stride += compressed ? 4 : 8;
+			}
+			static const uint32_t custom_shift[RSE::ARRAY_CUSTOM_COUNT] = { RSE::ARRAY_FORMAT_CUSTOM0_SHIFT, RSE::ARRAY_FORMAT_CUSTOM1_SHIFT, RSE::ARRAY_FORMAT_CUSTOM2_SHIFT, RSE::ARRAY_FORMAT_CUSTOM3_SHIFT };
+			static const uint32_t custom_size[RSE::ARRAY_CUSTOM_MAX] = { 4, 4, 4, 8, 4, 8, 12, 16 };
+			for (int c = 0; c < RSE::ARRAY_CUSTOM_COUNT; c++) {
+				if (buffers.format & (1ULL << (RSE::ARRAY_CUSTOM0 + c))) {
+					geometry.attrib_stride += custom_size[(buffers.format >> custom_shift[c]) & RSE::ARRAY_FORMAT_CUSTOM_MASK];
+				}
+			}
+
+			geometry.flags |= buffers.index_buffer.is_valid() ? GEOM_FLAG_INDEXED : 0;
+			geometry.flags |= (buffers.vertex_count <= 65536 && buffers.vertex_count > 0) ? GEOM_FLAG_INDEX16 : 0; // Same rule as mesh_add_surface().
+			geometry.flags |= buffers.primitive == RSE::PRIMITIVE_TRIANGLE_STRIP ? GEOM_FLAG_STRIP : 0;
+			geometry.flags |= (buffers.primitive != RSE::PRIMITIVE_TRIANGLES && buffers.primitive != RSE::PRIMITIVE_TRIANGLE_STRIP) ? GEOM_FLAG_NOT_TRIANGLES : 0;
+			geometry.flags |= (!instanced && compressed) ? GEOM_FLAG_COMPRESSED_READ : 0;
+			geometry.flags |= compressed ? GEOM_FLAG_COMPRESSED_UV : 0;
+			geometry.flags |= (buffers.format & RSE::ARRAY_FORMAT_NORMAL) ? GEOM_FLAG_HAS_NORMAL : 0;
+			geometry.flags |= (buffers.format & RSE::ARRAY_FORMAT_TEX_UV) ? GEOM_FLAG_HAS_UV : 0;
+
+			frame.geometry_records.push_back(geometry);
+		}
+
+		draw.flags = owner->base_flags & (INSTANCE_DATA_FLAG_MULTIMESH | INSTANCE_DATA_FLAG_MULTIMESH_FORMAT_2D | INSTANCE_DATA_FLAG_MULTIMESH_HAS_COLOR | INSTANCE_DATA_FLAG_MULTIMESH_HAS_CUSTOM_DATA | INSTANCE_DATA_FLAG_MULTIMESH_INDIRECT);
+		draw.instance_count = owner->instance_count > 1 ? owner->instance_count : element_info.repeat; // As in _render_list().
+		if (owner->base_flags & INSTANCE_DATA_FLAG_MULTIMESH) {
+			set_addr(draw.instance_addr, mesh_storage->_multimesh_get_buffer_rd_rid(owner->data->base));
+			uint32_t unused_previous_offset = 0;
+			mesh_storage->_multimesh_get_motion_vectors_offsets(owner->data->base, draw.multimesh_offset, unused_previous_offset);
+		}
+		// TODO: skinned / blend shape output buffers and multimesh buffers updated this frame are read through BDA only,
+		// so the render graph does not order the deferred pass after their compute/transfer writes. They need a dummy
+		// (but referenced) storage binding in the deferred pass to register the dependency (see E1e).
+	}
+
+	/* Upload */
+
+	auto ensure_buffer = [rd](RID &r_buffer, uint32_t &r_capacity, uint32_t p_count, uint32_t p_stride, const char *p_name) {
+		if (r_capacity < p_count || r_buffer.is_null()) {
+			if (r_buffer.is_valid()) {
+				rd->free_rid(r_buffer);
+			}
+			r_capacity = MAX(Math::next_power_of_2(p_count), 64u);
+			r_buffer = rd->storage_buffer_create(r_capacity * p_stride);
+			rd->set_resource_name(r_buffer, p_name);
+		}
+	};
+
+	RenderBufferDataVsDeferredClustered::DeferredRecordBuffers &buffers = p_rb_data->deferred_records;
+	ensure_buffer(buffers.draw_records, buffers.draw_capacity, element_count, sizeof(DeferredDrawRecord), "VSDC draw records");
+	ensure_buffer(buffers.geometry_records, buffers.geometry_capacity, frame.geometry_records.size(), sizeof(DeferredGeometryRecord), "VSDC geometry records");
+	if (element_count > 0) {
+		rd->buffer_update(buffers.draw_records, 0, element_count * sizeof(DeferredDrawRecord), frame.draw_records.ptr());
+	}
+	if (frame.geometry_records.size() > 0) {
+		rd->buffer_update(buffers.geometry_records, 0, frame.geometry_records.size() * sizeof(DeferredGeometryRecord), frame.geometry_records.ptr());
+	}
+}
+
+void RenderVsDeferredClustered::_deferred_compute_list(RenderBufferDataVsDeferredClustered *p_rb_data, RID p_render_pass_uniform_set) {
+	const RendererRD::VisibilityPreprocessor::SortBuffers &sort = p_rb_data->sort;
+	if (sort.slot_count == 0) {
+		return;
+	}
+
+	RenderingDevice *rd = RD::get_singleton();
+
+	struct {
+		uint32_t slot;
+		uint32_t draw_record_count;
+		uint32_t geometry_record_count;
+		uint32_t pad;
+	} push_constant = {};
+	push_constant.draw_record_count = deferred_frame.draw_records.size();
+	push_constant.geometry_record_count = deferred_frame.geometry_records.size();
 
 	RD::ComputeListID compute_list = rd->compute_list_begin();
 
@@ -354,81 +508,18 @@ void RendererSceneRenderImplementation::RenderVsDeferredClustered::_deferred_com
 
 	//global scope bindings
 	rd->compute_list_bind_uniform_set(compute_list, deferred_render_base_uniform_set, SCENE_UNIFORM_SET);
-	rd->compute_list_bind_uniform_set(compute_list, p_params->render_pass_uniform_set, RENDER_PASS_UNIFORM_SET);
+	rd->compute_list_bind_uniform_set(compute_list, p_render_pass_uniform_set, RENDER_PASS_UNIFORM_SET);
 	rd->compute_list_bind_uniform_set(compute_list, deferred_shader->default_vec4_xform_uniform_set, TRANSFORMS_UNIFORM_SET);
 
-	const bool color_pass = pass_mode == PASS_MODE_COLOR || pass_mode == PASS_MODE_DEFERRED_SHADING;
+	for (uint32_t slot = 0; slot < sort.slot_count; slot++) {
+		const DeferredMaterialSlot &material_slot = deferred_frame.material_slots[slot];
+		// TODO: bind the compute twin of material_slot.material's uniform set (material_slot.uniform_set is the raster
+		// one, laid out for material_slot.shader) at MATERIAL_UNIFORM_SET once deferred_shading_pass.glsl evaluates materials.
+		(void)material_slot;
 
-	RID prev_material_uniform_set;
-	RID prev_xforms_uniform_set;
-
-	SceneState::PushConstant push_constant = {};
-
-	//TODO: rework the dispatch to happen once per material
-	for (uint32_t i = 0; i < p_params->element_count; i++) {
-		const GeometryInstanceSurfaceDataCache *surf = p_params->elements[i];
-		const RenderElementInfo &element_info = p_params->element_info[i];
-
-		if (color_pass && surf->color_pass_inclusion_mask && (p_params->color_pass_flags & surf->color_pass_inclusion_mask) == 0) {
-			// Surfaces can be in both lists (e.g. alpha with depth pre-pass); exclude them from the color pass they don't belong to.
-			continue;
-		}
-
-		if (surf->owner->instance_count == 0) {
-			continue;
-		}
-
-		push_constant.base_index = i + p_params->element_offset;
-
-		RID material_uniform_set;
-
-		void *mesh_surface = surf->surface;
-		if (!mesh_surface) {
-			continue;
-		}
-
-		material_uniform_set = surf->material_uniform_set;
-		if (color_pass) {
-			surf->material->set_as_used();
-		}
-
-		RID xforms_uniform_set = surf->owner->transforms_uniform_set;
-		if (xforms_uniform_set.is_valid() && prev_xforms_uniform_set != xforms_uniform_set) {
-			rd->compute_list_bind_uniform_set(compute_list, xforms_uniform_set, TRANSFORMS_UNIFORM_SET);
-			prev_xforms_uniform_set = xforms_uniform_set;
-		}
-
-		if (material_uniform_set != prev_material_uniform_set) {
-			// Update uniform set.
-			//TODO: deferred_shading_pass.glsl declares no material set yet, this binding is not used by the pipeline.
-			if (material_uniform_set.is_valid() && rd->uniform_set_is_valid(material_uniform_set)) { // Material may not have a uniform set.
-				rd->compute_list_bind_uniform_set(compute_list, material_uniform_set, MATERIAL_UNIFORM_SET);
-			}
-
-			prev_material_uniform_set = material_uniform_set;
-		}
-
-		// Multimesh buffers may be double buffered (for motion vectors), get the offset of the current frame.
-		uint32_t unused_previous_offset = 0;
-		if (surf->owner->base_flags & INSTANCE_DATA_FLAG_MULTIMESH) {
-			mesh_storage->_multimesh_get_motion_vectors_offsets(surf->owner->data->base, push_constant.multimesh_offset, unused_previous_offset);
-		} else {
-			push_constant.multimesh_offset = 0;
-		}
-
-		rd->compute_list_set_push_constant(compute_list, &push_constant, sizeof(SceneState::PushConstant));
-
-		uint32_t instance_count = surf->owner->instance_count > 1 ? surf->owner->instance_count : element_info.repeat;
-
-		if (surf->owner->base_flags & INSTANCE_DATA_FLAG_MULTIMESH_INDIRECT) {
-			//TODO: dispatch instanced deferred shading
-			// rd->draw_list_draw_indirect(draw_list, index_array_rd.is_valid(), mesh_storage->_multimesh_get_command_buffer_rd_rid(surf->owner->data->base), surf->surface_index * sizeof(uint32_t) * mesh_storage->INDIRECT_MULTIMESH_COMMAND_STRIDE, 1, 0);
-		} else {
-			//TODO: dispatch non-instanced deferred shading
-			// rd->draw_list_draw(draw_list, index_array_rd.is_valid(), instance_count);
-		}
-
-		i += element_info.repeat - 1; //skip equal elements
+		push_constant.slot = slot;
+		rd->compute_list_set_push_constant(compute_list, &push_constant, sizeof(push_constant));
+		rd->compute_list_dispatch_indirect(compute_list, sort.dispatch_args_buffer, slot * RendererRD::VisibilityPreprocessor::DISPATCH_ARGS_STRIDE);
 	}
 
 	rd->compute_list_end();
@@ -514,6 +605,9 @@ void RenderVsDeferredClustered::_fill_instance_data(RenderListType p_render_list
 		p_render_info[RSE::VIEWPORT_RENDER_INFO_OBJECTS_IN_FRAME] += element_total;
 	}
 
+	// The visibility buffer stores the instance index within a draw in 16 bits, so opaque repeat groups are capped at 65536.
+	const uint32_t max_repeats = p_render_list == RENDER_LIST_OPAQUE ? MIN(uint32_t(RenderElementInfo::MAX_REPEATS), 1u << 16) : uint32_t(RenderElementInfo::MAX_REPEATS);
+
 	uint32_t repeats = 0;
 	GeometryInstanceSurfaceDataCache *prev_surface = nullptr;
 	for (uint32_t i = 0; i < element_total; i++) {
@@ -551,9 +645,9 @@ void RenderVsDeferredClustered::_fill_instance_data(RenderListType p_render_list
 
 		const bool cant_repeat = instance_data.flags & INSTANCE_DATA_FLAG_MULTIMESH || inst->mesh_instance.is_valid();
 
-		if (prev_surface != nullptr && !cant_repeat && prev_surface->sort.sort_key1 == surface->sort.sort_key1 && prev_surface->sort.sort_key2 == surface->sort.sort_key2 && inst->mirror == prev_surface->owner->mirror && repeats < RenderElementInfo::MAX_REPEATS) {
-			//set surface ids to the surface of the 1st instance
-			instance_data.surface_submission_idx = scene_state.curr_gpu_ptr[p_render_list][i - 1 + p_offset].surface_submission_idx;
+		if (prev_surface != nullptr && !cant_repeat && prev_surface->sort.sort_key1 == surface->sort.sort_key1 && prev_surface->sort.sort_key2 == surface->sort.sort_key2 && inst->mirror == prev_surface->owner->mirror && repeats < max_repeats) {
+			//set surface ids to the surface of the 1st instance (repeats elements of this group precede this one)
+			instance_data.surface_submission_idx = i - repeats;
 			//this element is the same as the previous one, count repeats to draw it using instancing
 			repeats++;
 		} else {
@@ -971,14 +1065,25 @@ void RenderVsDeferredClustered::_render_scene(RenderDataRD *p_render_data, const
 		RD::get_singleton()->draw_command_end_label();
 	}
 
-	const bool sort_supported = rb->get_view_count() == 1;
-	if (sort_supported) {
-		RENDER_TIMESTAMP("Deferred Shading Preprocessing");
-		//TODO: count unique surfaces in _fill_render_list instead of using total value. The surface buffer must be made less sparse.
-		visbility_preprocessor->sort_allocate_buffers(rb_data->sort, screen_size, render_list[RENDER_LIST_OPAQUE].elements.size());
-		visbility_preprocessor->sort_pixels(rb_data->sort, rb_data->get_visibility_buffer(), screen_size);
-	} else {
+	// The deferred path (records, sort pass, deferred shading pass) needs buffer device addresses and a single view.
+	bool deferred_supported = true;
+	if (rb->get_view_count() != 1) {
 		WARN_PRINT_ONCE("The visibility buffer sort pass does not support multiview yet.");
+		deferred_supported = false;
+	} else if (deferred_shader == nullptr) {
+		WARN_PRINT_ONCE("The deferred shading pass requires buffer device address support, it is skipped.");
+		deferred_supported = false;
+	}
+
+	if (deferred_supported) {
+		RENDER_TIMESTAMP("Deferred Shading Preprocessing");
+		RD::get_singleton()->draw_command_begin_label("Deferred Shading Preprocessing");
+
+		_fill_deferred_records(rb_data.ptr());
+		visbility_preprocessor->sort_allocate_buffers(rb_data->sort, screen_size, deferred_frame.material_slots.size());
+		visbility_preprocessor->sort_pixels(rb_data->sort, rb_data->get_visibility_buffer(), rb_data->deferred_records.draw_records, deferred_frame.draw_records.size(), screen_size);
+
+		RD::get_singleton()->draw_command_end_label();
 	}
 
 	/* 2. Shadow passes */
@@ -1023,24 +1128,14 @@ void RenderVsDeferredClustered::_render_scene(RenderDataRD *p_render_data, const
 		RD::get_singleton()->draw_command_end_label();
 	}
 
-	/* Opaque deferred pass */
-	{
+	/* Opaque deferred pass (one indirect dispatch per material slot) */
+	if (deferred_supported && rb_data->sort.slot_count > 0) {
 		RENDER_TIMESTAMP("Render Deferred Opaque Pass");
 		RD::get_singleton()->draw_command_begin_label("Render Deferred Opaque Pass");
 
 		uint32_t opaque_pass_uniform_buffer_index = _setup_environment(p_render_data, screen_size, screen_size, p_default_bg_color, true);
-		RID rp_uniform_set = _setup_deffered_shading_uniform_set(RENDER_LIST_OPAQUE, p_render_data, radiance_texture, samplers, opaque_pass_uniform_buffer_index, true);
-
-		Vector<Color> c;
-		if (!load_color) {
-			Color cc = clear_color.srgb_to_linear();
-			cc.a = 0; // Same as Forward+.
-			c.push_back(cc);
-		}
-
-		RenderList &rl = render_list[RENDER_LIST_OPAQUE];
-		RenderListParameters render_list_params(rl.elements.ptr(), rl.element_info.ptr(), rl.elements.size(), reverse_cull, PASS_MODE_DEFERRED_SHADING, 0, rp_uniform_set);
-		_deferred_compute_list(&render_list_params, load_color ? RD::DRAW_DEFAULT_ALL : RD::DRAW_CLEAR_COLOR_ALL, c, 0.0f, p_render_data->render_region);
+		RID rp_uniform_set = _setup_deferred_shading_uniform_set(rb_data.ptr(), p_render_data, radiance_texture, samplers, opaque_pass_uniform_buffer_index);
+		_deferred_compute_list(rb_data.ptr(), rp_uniform_set);
 
 		RD::get_singleton()->draw_command_end_label();
 	}
@@ -1374,7 +1469,12 @@ void RenderVsDeferredClustered::_update_render_base_uniform_set() {
 	uniforms.push_back(RD::Uniform(RD::UNIFORM_TYPE_TEXTURE, 6, dfg_lut.texture));
 
 	render_base_uniform_set = RD::get_singleton()->uniform_set_create(uniforms, scene_shader.default_shader_rd, SCENE_UNIFORM_SET);
-	deferred_render_base_uniform_set = RD::get_singleton()->uniform_set_create(uniforms, deferred_shader->get_shader_rd(), SCENE_UNIFORM_SET);
+	if (deferred_shader) {
+		if (deferred_render_base_uniform_set.is_valid() && RD::get_singleton()->uniform_set_is_valid(deferred_render_base_uniform_set)) {
+			RD::get_singleton()->free_rid(deferred_render_base_uniform_set);
+		}
+		deferred_render_base_uniform_set = RD::get_singleton()->uniform_set_create(uniforms, deferred_shader->get_shader_rd(), SCENE_UNIFORM_SET);
+	}
 }
 
 LocalVector<RD::Uniform> RendererSceneRenderImplementation::RenderVsDeferredClustered::_build_render_pass_uniform_set(RenderListType p_render_list, const RenderDataRD *p_render_data, RID p_radiance_texture, const RendererRD::MaterialStorage::Samplers &p_samplers, uint32_t p_uniform_buffer_index, bool p_use_directional_shadow_atlas) {
@@ -1453,8 +1553,17 @@ LocalVector<RD::Uniform> RendererSceneRenderImplementation::RenderVsDeferredClus
 	return std::move(uniforms);
 }
 
-RID RendererSceneRenderImplementation::RenderVsDeferredClustered::_setup_deffered_shading_uniform_set(RenderListType p_render_list, const RenderDataRD *p_render_data, RID p_radiance_texture, const RendererRD::MaterialStorage::Samplers &p_samplers, uint32_t p_uniform_buffer_index, bool p_use_directional_shadow_atlas) {
-	return UniformSetCacheRD::get_singleton()->get_cache_vec(deferred_shader->get_shader_rd(), RENDER_PASS_UNIFORM_SET, _build_render_pass_uniform_set(p_render_list, p_render_data, p_radiance_texture, p_samplers, p_uniform_buffer_index, p_use_directional_shadow_atlas));
+RID RenderVsDeferredClustered::_setup_deferred_shading_uniform_set(const RenderBufferDataVsDeferredClustered *p_rb_data, const RenderDataRD *p_render_data, RID p_radiance_texture, const RendererRD::MaterialStorage::Samplers &p_samplers, uint32_t p_uniform_buffer_index) {
+	LocalVector<RD::Uniform> uniforms = _build_render_pass_uniform_set(RENDER_LIST_OPAQUE, p_render_data, p_radiance_texture, p_samplers, p_uniform_buffer_index, true);
+
+	uniforms.push_back(RD::Uniform(RD::UNIFORM_TYPE_TEXTURE, 22, p_rb_data->get_visibility_buffer()));
+	uniforms.push_back(RD::Uniform(RD::UNIFORM_TYPE_STORAGE_BUFFER, 23, p_rb_data->sort.slot_counts_buffer));
+	uniforms.push_back(RD::Uniform(RD::UNIFORM_TYPE_STORAGE_BUFFER, 24, p_rb_data->sort.slot_offsets_buffer));
+	uniforms.push_back(RD::Uniform(RD::UNIFORM_TYPE_STORAGE_BUFFER, 25, p_rb_data->sort.pixel_list_buffer));
+	uniforms.push_back(RD::Uniform(RD::UNIFORM_TYPE_STORAGE_BUFFER, 26, p_rb_data->deferred_records.draw_records));
+	uniforms.push_back(RD::Uniform(RD::UNIFORM_TYPE_STORAGE_BUFFER, 27, p_rb_data->deferred_records.geometry_records));
+
+	return UniformSetCacheRD::get_singleton()->get_cache_vec(deferred_shader->get_shader_rd(), RENDER_PASS_UNIFORM_SET, uniforms);
 }
 
 RID RenderVsDeferredClustered::_setup_render_pass_uniform_set(RenderListType p_render_list, const RenderDataRD *p_render_data, RID p_radiance_texture, const RendererRD::MaterialStorage::Samplers &p_samplers, uint32_t p_uniform_buffer_index, bool p_use_directional_shadow_atlas) {
@@ -1820,7 +1929,10 @@ RenderVsDeferredClustered::RenderVsDeferredClustered() {
 #endif
 
 		scene_shader.init(defines);
-		deferred_shader = memnew(DeferredShader(defines, scene_shader.default_vec4_xform_buffer));
+		// The deferred shading pass reads mesh geometry through buffer device addresses.
+		if (RD::get_singleton()->has_feature(RD::SUPPORTS_BUFFER_DEVICE_ADDRESS)) {
+			deferred_shader = memnew(DeferredShader(defines, scene_shader.default_vec4_xform_buffer));
+		}
 	}
 
 	_create_lut(best_fit_normal, RD::DATA_FORMAT_R8_UNORM, 1024);

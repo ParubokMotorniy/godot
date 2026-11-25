@@ -20,6 +20,7 @@
 #define TANGENT_USED
 #endif
 
+#ifndef DEFERRED_SHADING_PASS // The deferred shading compute pass declares its own push constant.
 layout(push_constant, std430) uniform DrawCall {
 	uint instance_index;
 	uint multimesh_offset; // Offset of the current frame's transforms in a multimesh/particles buffer.
@@ -27,6 +28,7 @@ layout(push_constant, std430) uniform DrawCall {
 	uint pad1;
 }
 draw_call;
+#endif
 
 /* Specialization Constants (set per pipeline, see SceneShaderVsDeferredClustered::ShaderSpecialization) */
 

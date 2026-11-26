@@ -496,10 +496,11 @@ void RenderVsDeferredClustered::_deferred_compute_list(RenderBufferDataVsDeferre
 		uint32_t slot;
 		uint32_t draw_record_count;
 		uint32_t geometry_record_count;
-		uint32_t pad;
+		uint32_t slot_count;
 	} push_constant = {};
 	push_constant.draw_record_count = deferred_frame.draw_records.size();
 	push_constant.geometry_record_count = deferred_frame.geometry_records.size();
+	push_constant.slot_count = sort.slot_count;
 
 	RD::ComputeListID compute_list = rd->compute_list_begin();
 
@@ -1105,30 +1106,30 @@ void RenderVsDeferredClustered::_render_scene(RenderDataRD *p_render_data, const
 
 	RID color_framebuffer = rb_data->get_color_fb();
 
-	//TODO: get rid of this pass
 	/* 5. Opaque color pass */
-	{
-		RENDER_TIMESTAMP("Render Opaque Pass");
-		RD::get_singleton()->draw_command_begin_label("Render Opaque Pass");
+	// {
+	// 	RENDER_TIMESTAMP("Render Opaque Pass");
+	// 	RD::get_singleton()->draw_command_begin_label("Render Opaque Pass");
 
-		uint32_t opaque_pass_uniform_buffer_index = _setup_environment(p_render_data, screen_size, screen_size, p_default_bg_color, true);
-		RID rp_uniform_set = _setup_render_pass_uniform_set(RENDER_LIST_OPAQUE, p_render_data, radiance_texture, samplers, opaque_pass_uniform_buffer_index, true);
+	// 	uint32_t opaque_pass_uniform_buffer_index = _setup_environment(p_render_data, screen_size, screen_size, p_default_bg_color, true);
+	// 	RID rp_uniform_set = _setup_render_pass_uniform_set(RENDER_LIST_OPAQUE, p_render_data, radiance_texture, samplers, opaque_pass_uniform_buffer_index, true);
 
-		Vector<Color> c;
-		if (!load_color) {
-			Color cc = clear_color.srgb_to_linear();
-			cc.a = 0; // Same as Forward+.
-			c.push_back(cc);
-		}
+	// 	Vector<Color> c;
+	// 	if (!load_color) {
+	// 		Color cc = clear_color.srgb_to_linear();
+	// 		cc.a = 0; // Same as Forward+.
+	// 		c.push_back(cc);
+	// 	}
 
-		RenderList &rl = render_list[RENDER_LIST_OPAQUE];
-		RenderListParameters render_list_params(rl.elements.ptr(), rl.element_info.ptr(), rl.elements.size(), reverse_cull, PASS_MODE_COLOR, 0, rp_uniform_set);
-		_render_list_with_draw_list(&render_list_params, color_framebuffer, load_color ? RD::DRAW_DEFAULT_ALL : RD::DRAW_CLEAR_COLOR_ALL, c, 0.0f, p_render_data->render_region);
+	// 	RenderList &rl = render_list[RENDER_LIST_OPAQUE];
+	// 	RenderListParameters render_list_params(rl.elements.ptr(), rl.element_info.ptr(), rl.elements.size(), reverse_cull, PASS_MODE_COLOR, 0, rp_uniform_set);
+	// 	_render_list_with_draw_list(&render_list_params, color_framebuffer, load_color ? RD::DRAW_DEFAULT_ALL : RD::DRAW_CLEAR_COLOR_ALL, c, 0.0f, p_render_data->render_region);
 
-		RD::get_singleton()->draw_command_end_label();
-	}
+	// 	RD::get_singleton()->draw_command_end_label();
+	// }
 
-	/* Opaque deferred pass (one indirect dispatch per material slot) */
+	/* Opaque deferred pass */
+	//TODO: clear appropriate buffers
 	if (deferred_supported && rb_data->sort.slot_count > 0) {
 		RENDER_TIMESTAMP("Render Deferred Opaque Pass");
 		RD::get_singleton()->draw_command_begin_label("Render Deferred Opaque Pass");
@@ -1562,6 +1563,7 @@ RID RenderVsDeferredClustered::_setup_deferred_shading_uniform_set(const RenderB
 	uniforms.push_back(RD::Uniform(RD::UNIFORM_TYPE_STORAGE_BUFFER, 25, p_rb_data->sort.pixel_list_buffer));
 	uniforms.push_back(RD::Uniform(RD::UNIFORM_TYPE_STORAGE_BUFFER, 26, p_rb_data->deferred_records.draw_records));
 	uniforms.push_back(RD::Uniform(RD::UNIFORM_TYPE_STORAGE_BUFFER, 27, p_rb_data->deferred_records.geometry_records));
+	uniforms.push_back(RD::Uniform(RD::UNIFORM_TYPE_IMAGE, 28, p_rb_data->get_color_texture()));
 
 	return UniformSetCacheRD::get_singleton()->get_cache_vec(deferred_shader->get_shader_rd(), RENDER_PASS_UNIFORM_SET, uniforms);
 }

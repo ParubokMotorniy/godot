@@ -25,7 +25,7 @@ layout(push_constant, std430) uniform Params {
 	uint slot; // Material slot of this dispatch.
 	uint draw_record_count;
 	uint geometry_record_count;
-	uint pad;
+	uint slot_count;
 }
 params;
 
@@ -57,6 +57,8 @@ layout(set = 1, binding = 27, std430) restrict readonly buffer GeometryRecords {
 	GeometryRecord data[];
 }
 geometry_records;
+
+layout(rgba16f, set = 1, binding = 28) uniform restrict writeonly image2D color_output;
 
 // Mesh buffers are read as 32-bit words; 16-bit indices and UNORM16 data are unpacked by hand.
 layout(buffer_reference, std430, buffer_reference_align = 4) readonly buffer U32Buf {
@@ -154,4 +156,6 @@ void main() {
 	}
 
 	//TODO: barycentrics, attribute interpolation, material evaluation (set 3), lighting and the output image.
+	float normalizedSlotIdx = float(params.slot) / float(params.slot_count);
+	imageStore(color_output, ivec2(pixel), vec4(normalizedSlotIdx, normalizedSlotIdx, normalizedSlotIdx, 1.0));
 }

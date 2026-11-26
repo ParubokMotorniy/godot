@@ -121,6 +121,8 @@ public:
 		bool has_visibility_buffer() const { return render_buffers->has_texture(RB_SCOPE_VS_DEFERRED_CLUSTERED, RB_BUF_VISIBILITY); }
 		RID get_visibility_buffer() const { return render_buffers->get_texture(RB_SCOPE_VS_DEFERRED_CLUSTERED, RB_BUF_VISIBILITY); }
 
+		RID get_color_texture() const {return render_buffers->get_internal_texture();}
+
 		RID get_color_fb();
 		RID get_depth_fb(bool p_normal_roughness);
 		RID get_visibility_fb();
